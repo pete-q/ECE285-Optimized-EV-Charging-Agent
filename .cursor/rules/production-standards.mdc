@@ -1,0 +1,45 @@
+---
+description: Production, GitHub, and resume-quality standards for all project code
+alwaysApply: true
+---
+
+# Production / GitHub / Resume Quality Standards
+
+Treat all code in this project as **production-ready, GitHub-public, and portfolio/resume-worthy**. Apply these standards consistently.
+
+## Code Quality
+
+- **No placeholders or TODOs** in committed code unless tracked in issues with clear ownership.
+- **No dead code**: remove unused includes, functions, variables, and commented-out blocks.
+- **Consistent style**: follow the project’s existing style (naming, formatting, file layout). Use a formatter/linter and fix all reported issues.
+- **Clear naming**: variables, functions, and types must have descriptive names that reveal intent; avoid single-letter names except trivial loop indices.
+- **Single responsibility**: each function/class does one thing; split large functions and avoid god objects.
+- **DRY**: extract repeated logic into shared functions/utilities and reuse them.
+
+## Robustness & Safety
+
+- **Error handling**: handle errors explicitly; avoid empty `catch` blocks and silent failures. Propagate or log with context.
+- **Resource safety**: use RAII, smart pointers, and scope guards so resources (files, handles, memory) are never leaked.
+- **Bounds and validation**: validate inputs and array/container access; avoid undefined behavior and unchecked assumptions.
+- **No hardcoded secrets**: use environment variables or a secrets manager; never commit API keys, passwords, or tokens.
+
+## Documentation & Repo Hygiene
+
+- **README**: project has a README with purpose, how to build/run/test, and (if applicable) how to configure and deploy.
+- **Public APIs**: document modules, classes, and non-obvious functions (e.g. Doxygen/JSDoc style) so intent and usage are clear.
+- **`.gitignore`**: ignore build artifacts, IDE/config cruft, and local env files so the repo stays clean.
+- **Commit messages**: write clear, imperative messages that describe what and why, not just “fix” or “update.”
+
+## Testing & Maintainability
+
+- **Tests**: add or extend tests for new or changed behavior; keep tests focused, readable, and stable.
+- **Build**: project builds cleanly with a single, documented command (e.g. CMake/make/ninja) and no optional steps required for a “normal” build.
+- **Dependencies**: pin versions where appropriate; document how to install tools and libraries so others can reproduce the environment.
+
+## Resume / Portfolio Bar
+
+- Code should be something you’d be comfortable walking through in an interview or linking on a resume.
+- Prefer clear, idiomatic implementations over clever or obscure code.
+- Prefer small, reviewable changes and incremental improvement over large, opaque edits.
+
+When editing or adding code, apply these standards by default and suggest concrete fixes (e.g. add error handling, rename, extract a function, add a test) rather than leaving quality issues in place.

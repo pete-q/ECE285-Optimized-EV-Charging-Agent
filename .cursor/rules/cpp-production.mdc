@@ -1,0 +1,40 @@
+---
+description: C++ production and resume-quality conventions
+globs: **/*.cpp,**/*.hpp,**/*.cc,**/*.h,**/*.cxx
+alwaysApply: false
+---
+
+# C++ Production Standards
+
+Apply in addition to project-wide production standards. Keep C++ code interview- and portfolio-ready.
+
+## Modern C++ and Safety
+
+- Prefer **smart pointers** (`std::unique_ptr`, `std::shared_ptr`) over raw `new`/`delete`; use raw pointers only for non-owning, optional references.
+- Use **RAII** for all resources (files, sockets, locks); avoid manual cleanup and long-lived raw handles.
+- Prefer **`std::optional`**, **`std::variant`**, or clear error types over magic values or global error state.
+- Use **`const`** correctly: const member functions, const references for read-only parameters, const when values do not change.
+- Prefer **range-based `for`** and standard algorithms over raw loops when they improve readability.
+- Use **`[[nodiscard]]`** for functions whose return value must be used; use **`override`** on virtual overrides.
+- Avoid **naked `new`/`delete`**, C-style casts, and C-style arrays in interface boundaries; use containers and `std::array` where appropriate.
+
+## Structure and Style
+
+- **Headers**: use include guards or `#pragma once`; keep headers minimal (forward declarations where possible); no `using namespace` in headers.
+- **Naming**: consistent style (e.g. `PascalCase` for types, `snake_case` for functions/variables); avoid abbreviations except widely known ones.
+- **One logical idea per function**: small, testable functions; extract complex logic into named helpers.
+- **No global mutable state** in production code; prefer dependency injection or explicit context parameters.
+
+## Error Handling and Invariants
+
+- Use **exceptions** for real errors (or a project-standard error type); document which functions throw.
+- Validate **preconditions** at API boundaries (e.g. `assert` in debug, or return `std::expected`/error codes where the project standard is no exceptions).
+- **Destructors** must not throw; keep them simple and exception-safe.
+
+## Build and Dependencies
+
+- Prefer **CMake** (or the project’s chosen build system) with clear targets; no brittle or environment-specific paths in committed config.
+- Document **C++ standard** (e.g. C++17/C++20) and **compiler** expectations in README or CMake.
+- Keep **third-party deps** minimal and versioned; document how to fetch and build them.
+
+Code in this project should be clean, safe, and something you’d be proud to show in a code review or on a resume.
