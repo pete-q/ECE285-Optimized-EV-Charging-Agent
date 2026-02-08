@@ -71,11 +71,16 @@ The status bar shows the active interpreter; use it to switch if you have multip
 
 ## Publishing to GitHub
 
-Before pushing:
-
-- **Secrets**: Store the ACN-Data API token (and any LLM keys) in environment variables or `.env`; never commit them. `.env` is in `.gitignore`.
-- **Build**: From project root, `uv pip install -r requirements.txt` and run tests so the repo builds cleanly for others.
-- **Artifacts**: `experiments/` outputs (CSV, JSON, plots) are ignored; the folder stays tracked via `.gitkeep`. Add a sample or document expected outputs if useful.
+1. **Create a new repo** on [GitHub](https://github.com/new) (e.g. `ece285-ev-charging-assistant`). Do not add a README, .gitignore, or license if you already have them locally.
+2. **Add the remote and push:**
+   ```bash
+   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+   git branch -M main
+   git push -u origin main
+   ```
+3. **Secrets**: Store the ACN-Data API token (and any LLM keys) in environment variables or `.env`; never commit them. `.env` is in `.gitignore`.
+4. **Build**: From project root, `uv pip install -r requirements.txt` and run tests so the repo builds cleanly for others.
+5. **Artifacts**: `experiments/` outputs (CSV, JSON, plots) are ignored; the folder stays tracked via `.gitkeep`. Add a sample or document expected outputs if useful.
 
 ## Reference
 
