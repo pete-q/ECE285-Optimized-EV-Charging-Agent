@@ -20,6 +20,7 @@ Day-ahead charging schedule assistant for a parking facility: LLM baseline vs ag
 | `experiments/` | Benchmark outputs and tables |
 | `stretch/` | Peak-penalty sweep, what-if queries |
 | `docs/` | Report notes, ablations |
+| `Midway_report.md` | Midway deliverables: completed work and Phase B/C remaining |
 | `tests/` | Unit and integration tests |
 | `acnportal/` | ACN-Data/ACN-Sim client (clone separately; see Setup) |
 
@@ -81,6 +82,16 @@ The status bar shows the active interpreter; use it to switch if you have multip
 3. **Secrets**: Store the ACN-Data API token (and any LLM keys) in environment variables or `.env`; never commit them. `.env` is in `.gitignore`.
 4. **Build**: From project root, `uv pip install -r requirements.txt` and run tests so the repo builds cleanly for others.
 5. **Artifacts**: `experiments/` outputs (CSV, JSON, plots) are ignored; the folder stays tracked via `.gitkeep`. Add a sample or document expected outputs if useful.
+
+## Run Phase A (current)
+
+From project root with venv active and `ACN_DATA_API_TOKEN` in `.env`:
+
+```bash
+python -m scripts.run_phase_a --site caltech --date 2019-06-15
+```
+
+Loads sessions from the API, runs the optimizer, checks constraints, computes metrics (cost, peak, unmet, % fully served, % cost reduction vs uncontrolled), and saves schedule and load profile plots to `experiments/`. See `scripts/README.md` and `Midway_report.md`.
 
 ## Reference
 

@@ -7,4 +7,5 @@ from data.format.schema import DaySessions
 
 def optimize(day: DaySessions, site: SiteConfig, tou: TOUConfig, penalty_unmet: float = 1e6) -> SolveResult:
     """Call optimization.solver.solve and return SolveResult."""
+    # return solve(day, site, tou, penalty_unmet)
     ...

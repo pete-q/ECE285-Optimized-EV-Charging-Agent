@@ -31,5 +31,12 @@ def run_baseline(
 
     Load OPENAI_API_KEY from api_key arg or from environment (e.g. via dotenv).
     If api_key is missing, return a zero schedule and parse_success=False with parse_error message.
+
+    Pseudocode:
+        # key = api_key or os.environ.get("OPENAI_API_KEY")
+        # if not key: return BaselineResult(zeros, parse_success=False, parse_error="OPENAI_API_KEY not set")
+        # prompt_text = build_prompt(day, site, tou); response = openai.chat.completions.create(...); response_text = content
+        # parse_result = parse_llm_schedule(response_text, day)
+        # return BaselineResult(schedule=parse_result.schedule, parse_success=parse_result.success, raw_response=..., parse_error=...)
     """
     ...

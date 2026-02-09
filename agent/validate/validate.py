@@ -12,4 +12,5 @@ def validate(
     site: SiteConfig,
 ) -> CheckResult:
     """Run constraint checker; return CheckResult (feasible, violations, unmet, peak)."""
+    # return check(schedule, day, site)
     ...

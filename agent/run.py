@@ -27,5 +27,14 @@ def run_agent(
     tou: TOUConfig,
     request: str = "Minimize energy cost for this day.",
 ) -> AgentResult:
-    """Run Plan → Optimize → Validate → Refine → Explain; return schedule, metrics, and explanation."""
+    """Run Plan → Optimize → Validate → Refine → Explain; return schedule, metrics, and explanation.
+
+    Pseudocode:
+        # plan_result = plan(request, day, site, tou); day, site, tou = plan_result.day, .site, .tou
+        # solve_result = optimize(day, site, tou); schedule = solve_result.schedule; check_result = validate(schedule, day, site)
+        # if not check_result.feasible and max_retries: day, site, tou, solve_result = refine(...); re-validate
+        # total_cost_usd = solve_result.total_cost_usd; peak = solve_result.peak_load_kw; unmet = sum(solve_result.unmet_energy_kwh)
+        # uncontrolled_cost = total_cost(charge_asap_schedule(...), tou, dt); facts = extract_facts(..., uncontrolled_cost)
+        # explanation = generate_explanation(facts); return AgentResult(schedule, total_cost_usd, peak, unmet, feasible, explanation)
+    """
     ...

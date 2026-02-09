@@ -25,4 +25,5 @@ def plan(
     tou: TOUConfig,
 ) -> PlanResult:
     """Parse request (e.g. 'minimize cost for this day') into PlanResult. Optional LLM step."""
+    # v1 pass-through: return PlanResult(day=day, site=site, tou=tou, objective="minimize_cost", raw=None)
     ...

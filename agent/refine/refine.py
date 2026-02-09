@@ -16,5 +16,10 @@ def refine(
 ) -> Tuple[DaySessions, SiteConfig, TOUConfig, SolveResult]:
     """If solve failed or validate found violations, adjust params and return (day, site, tou, new_result).
     Otherwise return inputs and same result. max_retries limits refinement attempts.
+
+    Pseudocode:
+        # if solve_result.success and max_retries <= 0: return (day, site, tou, solve_result)
+        # optional: adjust day/site/tou; new_result = solve(day, site, tou); return (day, site, tou, new_result)
+        # simplest v1: return (day, site, tou, solve_result) unchanged
     """
     ...
