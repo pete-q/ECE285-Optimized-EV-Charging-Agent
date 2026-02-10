@@ -3,7 +3,7 @@
 **ECE 285 Project — Agentic EV Charging Schedule Assistant**  
 **Group #10**: Ryan Luo, Peter Quawas
 
-This document describes **what each file does**, **how it works**, and the **current status** of midway deliverables. It is structured in three parts: **Part I** (completed Phase A), **Part II** (remaining Phase B), and **Part III** (remaining Phase C).
+This document describes **what each file does**, **how it works**, and the **current status** of midway deliverables. It is structured in three parts: **Part I** (completed Phase A), **Part II** (completed Phase B), and **Part III** (remaining Phase C).
 
 ---
 
@@ -20,7 +20,10 @@ This document describes **what each file does**, **how it works**, and the **cur
    - 1.8 [Phase A script](#18-phase-a-script-scriptsrun_phase_apy)
    - 1.9 [Tests](#19-tests-tests)
    - 1.10 [End-to-end data flow](#110-end-to-end-data-flow-phase-a)
-2. [Part II — Remaining: Phase B (Baseline + evaluation)](#part-ii--remaining-phase-b-baseline--evaluation)
+2. [Part II — Completed (Phase B)](#part-ii--completed-phase-b)
+   - 2.1 [Baseline module](#21-baseline-module-baseline)
+   - 2.2 [Evaluation script for baseline](#22-evaluation-script-for-baseline)
+   - 2.3 [End-to-end data flow](#23-end-to-end-data-flow-phase-b)
 3. [Part III — Remaining: Phase C (Agent v1)](#part-iii--remaining-phase-c-agent-v1)
 4. [Reference: Midway checklist](#reference-midway-deliverable-checklist)
 
@@ -55,7 +58,7 @@ Loader (output), checker (input), solver (input), metrics (input), visualization
 ### File: `data/loader/loader.py`
 
 **Purpose**  
-Fetch charging sessions from the Caltech ACN-Data API for a given site and date, and convert them into the project’s standardized format (`DaySessions`). No synthetic data; API key required.
+Fetch charging sessions from the Caltech ACN-Data API for a given site and date, and convert them into the project's standardized format (`DaySessions`). No synthetic data; API key required.
 
 **What it does**
 - **`load_sessions(site_id, day_date, api_token=None, n_steps=96, dt_hours=0.25)`**  
@@ -139,7 +142,7 @@ Verify that a given schedule (a matrix of power values) satisfies all problem co
 ### File: `optimization/solver.py`
 
 **Purpose**  
-Compute an optimal charging schedule that minimizes TOU energy cost plus a penalty for unmet energy, subject to availability, per-charger limits, site cap, and energy balance. This is the core “optimizer” used by Phase A and (later) by the agent.
+Compute an optimal charging schedule that minimizes TOU energy cost plus a penalty for unmet energy, subject to availability, per-charger limits, site cap, and energy balance. This is the core "optimizer" used by Phase A and (later) by the agent.
 
 **What it does**
 - **`solve(day, site, tou, penalty_unmet=1e6)`**  
@@ -279,7 +282,7 @@ scripts/run_phase_a.py  ──►  data/loader/loader.py  ──►  DaySessions
 
 ---
 
-# Part II — Remaining: Phase B (Baseline + evaluation)
+# Part II — Completed (Phase B)
 
 Phase B implements the **direct LLM prompting baseline** and an **evaluation script** that runs it and reports the same metrics as Phase A.
 
@@ -287,34 +290,84 @@ Phase B implements the **direct LLM prompting baseline** and an **evaluation scr
 
 ### File: `baseline/prompt.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Build the single prompt string sent to the LLM so it can output a charging schedule. |
-| **Function** | `build_prompt(day, site, tou, instruction=None)` → `str`. |
-| **What to implement** | Assemble text that includes: (1) objective (minimize TOU cost), (2) horizon (n_steps, dt_hours), (3) site power cap P_max, (4) a **session table** with columns session_id, arrival_idx, departure_idx, energy_kwh, charger_id, max_power_kw (one row per session, same order as `day.sessions`). Append optional `instruction` (e.g. output format: “One row per session, space-separated power values per time step”). Use a clear, parseable format (e.g. markdown table or CSV-style lines). |
-| **Output** | Single string; no API calls. |
+**Purpose**  
+Build the single prompt string sent to the LLM so it can output a charging schedule.
+
+**What it does**
+- **`build_prompt(day, site, tou, instruction=None)`** → `str`  
+  - Assembles a comprehensive prompt with three main parts:
+    1. **Problem description**: objective (minimize TOU cost while meeting energy demand), time discretization (n_steps, dt_hours), site power cap P_max (via `_format_site_cap`), and TOU rate summary (via `_format_rates_summary`).
+    2. **Session table**: Pipe-delimited table with columns `session_index`, `session_id`, `arrival_idx`, `departure_idx`, `energy_kwh`, `charger_id`, `max_power_kw`. One row per session in the same order as `day.sessions`.
+    3. **Output specification**: Clear format instructions requiring `Session i: p0 p1 p2 ...` lines with exactly n_steps floating-point power values.
+  - If `instruction` is provided, appends it as additional user guidance.
+
+- **`_format_rates_summary(tou)`** → `str`  
+  - Returns a human-readable summary of the TOU rates (min, max, mean $/kWh).
+
+- **`_format_site_cap(site)`** → `str`  
+  - Returns a human-readable description of the site power cap (constant or time-varying).
+
+- **`_format_table(headers, rows)`** → `str`  
+  - Renders a pipe-delimited markdown-style table for easy parsing by the LLM.
+
+**How it works**
+- The prompt instructs the LLM to output a machine-readable schedule matrix. Session order in the output must match `day.sessions`. The format is strictly specified to simplify parsing.
+
+---
 
 ### File: `baseline/parse.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Convert the LLM’s reply (plain text) into a schedule matrix that the checker and metrics can use. |
-| **Function** | `parse_llm_schedule(response_text, day)` → `ParseResult(schedule, success, error_message)`. |
-| **What to implement** | Define a format (e.g. “Session 0: p0 p1 p2 …” or CSV rows). Parse numbers from the response into a numpy array of shape `(len(day.sessions), day.n_steps)` (power in kW). On any parse failure, return `ParseResult(schedule=zeros, success=False, error_message="...")`. Handle extra text, newlines, and minor formatting variation. |
-| **Output** | `ParseResult` dataclass; schedule order must match `day.sessions`. |
+**Purpose**  
+Convert the LLM's reply (plain text) into a schedule matrix that the checker and metrics can use.
+
+**What it does**
+- **`ParseResult`** dataclass: `schedule` (numpy array shape `(n_sessions, n_steps)`), `success` (bool), `error_message` (optional string).
+
+- **`parse_llm_schedule(response_text, day)`** → `ParseResult`  
+  - Parses lines matching the pattern `Session i: v0 v1 ... v_{n_steps-1}`.
+  - Extracts session index from the left side of the colon, parses floating-point values from the right side.
+  - Validates: session index in range, no duplicates, exactly n_steps values per line.
+  - On trivial day (no sessions or no steps), returns a zero schedule with `success=True`.
+
+- **`_fallback_matrix_parse(lines)`** (internal)  
+  - Fallback parser for when the model omits `Session i:` prefixes but still outputs a numeric matrix.
+  - Treats each line with exactly n_steps floats as one session row (in order).
+
+**How it works**
+- The parser is deliberately robust: ignores non-matching lines, tolerates extra whitespace, and provides clear error messages. If no valid session lines are found, it tries the fallback matrix parse before giving up.
+
+---
 
 ### File: `baseline/run.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Single entry point: build prompt, call the LLM, parse response into a schedule. |
-| **Function** | `run_baseline(day, site, tou, api_key=None, model="gpt-4o-mini")` → `BaselineResult(schedule, parse_success, raw_response, parse_error)`. |
-| **What to implement** | (1) Get `OPENAI_API_KEY` from `api_key` or environment (e.g. after loading `.env`). If missing, return a failed result with a clear parse_error. (2) Call `build_prompt(day, site, tou)`. (3) Call OpenAI API (e.g. `openai` client) with that prompt; read the assistant message. (4) Call `parse_llm_schedule(response_text, day)`. (5) Return `BaselineResult` with the parsed schedule and success/error fields. |
-| **Dependencies** | Add `openai` (or chosen client) to `requirements.txt`; document `OPENAI_API_KEY` in `.env.example`. |
+**Purpose**  
+Single entry point: build prompt, call the LLM, parse response into a schedule.
 
-### Optional: repair step
+**What it does**
+- **`BaselineResult`** dataclass: `schedule`, `parse_success`, `raw_response`, `parse_error`.
 
-If the parsed schedule violates constraints, optionally run one projection/repair (clip to [a_i, d_i), clip to max_power_kw, scale to site cap) and document whether metrics are reported before and/or after repair.
+- **`run_baseline(day, site, tou, api_key=None, model="gpt-4o-mini", max_completion_tokens=2048)`** → `BaselineResult`  
+  - **Input validation**: Checks that `tou.n_steps`, `site.n_steps`, and `day.n_steps` all match; verifies `dt_hours > 0`.
+  - **Trivial case**: If no sessions or no steps, returns a zero schedule immediately (no LLM call).
+  - **API key**: Resolves from `api_key` argument or `OPENAI_API_KEY` environment variable. If missing, returns a failed result with a clear error message.
+  - **Prompt**: Calls `build_prompt(day, site, tou)` to create the user message.
+  - **LLM call**: Uses the `openai` Python client to call `chat.completions.create` with:
+    - A system message instructing the model to output only schedules in the specified format.
+    - The user message with the full prompt.
+    - `temperature=0.0` for deterministic output.
+    - `max_tokens=max_completion_tokens` to bound output size.
+  - **Parse**: Calls `parse_llm_schedule(response_text, day)` to extract the schedule.
+  - **Returns**: `BaselineResult` with schedule, parse status, raw response, and any error.
+
+- **`_default_schedule(day)`** → `np.ndarray`  
+  - Returns a zero schedule with the correct shape for the given day.
+
+**How it works**
+- The function is defensive: catches `ImportError` for missing `openai` package, catches exceptions from the API call, and handles empty API responses. The `max_completion_tokens` parameter defaults to 2048 to prevent unbounded output.
+
+**Dependencies**
+- `openai>=1.0.0` in `requirements.txt`.
+- `OPENAI_API_KEY` documented in `.env.example`.
 
 ---
 
@@ -322,12 +375,54 @@ If the parsed schedule violates constraints, optionally run one projection/repai
 
 ### File: `scripts/run_baseline.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Run the baseline for a given site/date and output the same metrics as Phase A (cost, peak, unmet, % fully served, % cost reduction vs uncontrolled), plus feasibility and violations. |
-| **What to implement** | In `main()`: (1) Load `.env` from project root. (2) Parse CLI (`--site`, `--date`, optional `--output`). (3) Call `load_sessions(site_id, day_date)`. (4) Build `SiteConfig` and `TOUConfig` (same as Phase A). (5) Call `run_baseline(day, site, tou)`. (6) Run `check(schedule, day, site)`. (7) Compute uncontrolled schedule and cost; call `compute_metrics(..., violation_count=len(check_result.violations), uncontrolled_cost_usd=...)`. (8) Print or write metrics (e.g. to `experiments/baseline_metrics.json` or CSV). Optionally save schedule or use `--output`. |
-| **Reuse** | All metrics and the checker from Phase A; no new metric code. |
-| **Reproducibility** | Document in README or script: model name, prompt version, and exact run command (e.g. `python -m scripts.run_baseline --site caltech --date 2019-06-15`). |
+**Purpose**  
+Run the baseline for a given site/date and output the same metrics as Phase A (cost, peak, unmet, % fully served, % cost reduction vs uncontrolled), plus feasibility and violations.
+
+**What it does**
+- **CLI**: `--site` (default `caltech`), `--date` (default yesterday), `--model` (default `gpt-4o`), `--max-tokens` (default 1024).
+- **Environment**: Loads `.env` from project root (for `ACN_DATA_API_TOKEN` and `OPENAI_API_KEY`).
+
+**How it works (step-by-step)**
+1. Parse arguments; resolve `day_date`.
+2. Call `load_sessions(site_id, day_date)`. On error, print message and exit.
+3. If no sessions returned, print message and exit.
+4. Build `SiteConfig(P_max_kw=50, n_steps=day.n_steps, dt_hours=day.dt_hours)` and `TOUConfig(rates_per_kwh=default_tou_rates(day.n_steps))` (same as Phase A).
+5. Call `run_baseline(day, site, tou, model=args.model, max_completion_tokens=args.max_tokens)`.
+6. If parse was not successful, print warning but continue.
+7. Call `check(schedule, day, site)` to validate constraints.
+8. Compute uncontrolled schedule with `charge_asap_schedule` and its cost with `total_cost`. Call `compute_metrics(..., violation_count=len(check_result.violations), uncontrolled_cost_usd=...)`.
+9. Print results: feasibility, violation count, total cost, total unmet, peak load, % fully served, % cost reduction vs uncontrolled.
+10. If there are violations, print the first 10 with details.
+
+**Usage**  
+From project root with venv active:  
+`python -m scripts.run_baseline --site caltech --date 2019-06-15 --model gpt-4o`
+
+**Reuse**  
+All metrics and the checker from Phase A; no new metric code needed.
+
+---
+
+## 2.3 End-to-end data flow (Phase B)
+
+```
+.env (ACN_DATA_API_TOKEN, OPENAI_API_KEY)
+        │
+        ▼
+scripts/run_baseline.py  ──►  data/loader/loader.py  ──►  DaySessions (list of Session)
+        │
+        ├── config/site.py  ──►  SiteConfig, TOUConfig (default_tou_rates)
+        │
+        ├── baseline/prompt.py  ──►  build_prompt()  ──►  prompt string
+        │
+        ├── baseline/run.py  ──►  OpenAI API call  ──►  raw response text
+        │
+        ├── baseline/parse.py  ──►  parse_llm_schedule()  ──►  schedule matrix
+        │
+        ├── constraints/checker.py  ──►  CheckResult (feasible, violations)
+        │
+        └── evaluation/metrics  ──►  compute_metrics()  ──►  Metrics (cost, peak, unmet, %)
+```
 
 ---
 
@@ -357,7 +452,7 @@ Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → 
 
 | Item | Description |
 |------|-------------|
-| **Purpose** | Run the constraint checker on the agent’s schedule. |
+| **Purpose** | Run the constraint checker on the agent's schedule. |
 | **Function** | `validate(schedule, day, site)` → `CheckResult`. |
 | **What to implement** | Call `constraints.checker.check(schedule, day, site)` and return the result. |
 
@@ -375,7 +470,7 @@ Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → 
 |------|-------------|
 | **Purpose** | Turn numeric results into a short natural-language explanation that uses only computed facts (grounded). |
 | **Functions** | `extract_facts(schedule, total_cost_usd, peak_load_kw, total_unmet_kwh, uncontrolled_cost_usd=None)` → `ScheduleFacts`. `generate_explanation(facts, use_llm=False)` → `str`. |
-| **What to implement** | **extract_facts**: Build `ScheduleFacts` with the given numbers; if `uncontrolled_cost_usd` is provided, set `cost_reduction_vs_uncontrolled_pct = 100·(uncontrolled - total_cost_usd)/uncontrolled`. **generate_explanation**: For v1 use a template string, e.g. “Total cost $X. Peak load Y kW. Unmet Z kWh. Cost reduction vs uncontrolled: W%.” No LLM required for v1. |
+| **What to implement** | **extract_facts**: Build `ScheduleFacts` with the given numbers; if `uncontrolled_cost_usd` is provided, set `cost_reduction_vs_uncontrolled_pct = 100·(uncontrolled - total_cost_usd)/uncontrolled`. **generate_explanation**: For v1 use a template string, e.g. "Total cost $X. Peak load Y kW. Unmet Z kWh. Cost reduction vs uncontrolled: W%." No LLM required for v1. |
 
 ### File: `agent/run.py`
 
@@ -411,5 +506,5 @@ Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → 
 | Deliverable | Status | Notes |
 |-------------|--------|--------|
 | Data loader, standardized session format, constraint checker | ✅ Done | `data/format/schema.py`, `data/loader/loader.py`, `constraints/checker.py`; loader uses Eve API; checker has violations and tolerance. |
-| Prompting baseline implementation and evaluation scripts | 🔲 Phase B | Implement `baseline/prompt.py`, `parse.py`, `run.py`; implement `scripts/run_baseline.py`; reuse Phase A metrics. |
+| Prompting baseline implementation and evaluation scripts | ✅ Done | `baseline/prompt.py`, `parse.py`, `run.py`; `scripts/run_baseline.py`; reuses Phase A metrics and checker. |
 | Agentic pipeline v1 with optimization solver and visualization | ✅ Solver + viz done in Phase A; 🔲 agent wiring | Solver in `optimization/solver.py`; plots in `visualization/plots.py`. Implement agent plan, optimize, validate, refine, explain, run and `scripts/run_agent.py`. |
