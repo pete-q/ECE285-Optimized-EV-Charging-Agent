@@ -3,7 +3,7 @@
 **ECE 285 Project — Agentic EV Charging Schedule Assistant**  
 **Group #10**: Ryan Luo, Peter Quawas
 
-This document describes **what each file does**, **how it works**, and the **current status** of midway deliverables. It is structured in three parts: **Part I** (completed Phase A), **Part II** (completed Phase B), and **Part III** (remaining Phase C).
+This document describes **what each file does**, **how it works**, and the **current status** of midway deliverables. It is structured in three parts: **Part I** (completed Phase A), **Part II** (completed Phase B), and **Part III** (completed Phase C).
 
 ---
 
@@ -24,7 +24,10 @@ This document describes **what each file does**, **how it works**, and the **cur
    - 2.1 [Baseline module](#21-baseline-module-baseline)
    - 2.2 [Evaluation script for baseline](#22-evaluation-script-for-baseline)
    - 2.3 [End-to-end data flow](#23-end-to-end-data-flow-phase-b)
-3. [Part III — Remaining: Phase C (Agent v1)](#part-iii--remaining-phase-c-agent-v1)
+3. [Part III — Completed (Phase C)](#part-iii--completed-phase-c)
+   - 3.1 [Agent modules](#31-agent-modules-agent)
+   - 3.2 [Agent script and visualization](#32-agent-script-and-visualization)
+   - 3.3 [End-to-end data flow](#33-end-to-end-data-flow-phase-c)
 4. [Reference: Midway checklist](#reference-midway-deliverable-checklist)
 
 ---
@@ -426,7 +429,7 @@ scripts/run_baseline.py  ──►  data/loader/loader.py  ──►  DaySession
 
 ---
 
-# Part III — Remaining: Phase C (Agent v1)
+# Part III — Completed (Phase C)
 
 Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → Refine → Explain) by wiring existing components and adding thin agent modules and a run script.
 
@@ -434,51 +437,112 @@ Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → 
 
 ### File: `agent/plan/plan.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Turn a user request into a structured plan (day, site, tou, objective) for the optimizer and checker. |
-| **Function** | `plan(request, day, site, tou)` → `PlanResult(day, site, tou, objective, raw)`. |
-| **What to implement** | For v1: return `PlanResult(day=day, site=site, tou=tou, objective="minimize_cost", raw=None)`. No LLM or parsing required. Later: optionally parse `request` to extract objective or parameters. |
+**Purpose**  
+Turn a user request into a structured plan (day, site, tou, objective) for the optimizer and checker.
+
+**What it does**
+- **`PlanResult`** dataclass: `day`, `site`, `tou`, `objective` (string), `raw` (optional).
+
+- **`plan(request, day, site, tou)`** → `PlanResult`  
+  - For v1, this is a simple pass-through: the request string is stored in `raw` but not parsed.
+  - Returns `PlanResult(day=day, site=site, tou=tou, objective="minimize_cost", raw=request)`.
+  - Future versions may use an LLM to extract custom objectives or constraint modifications from natural-language requests.
+
+**How it works**
+- The function accepts a natural-language request but currently ignores its content (pass-through for v1). The objective is always `"minimize_cost"`.
+
+---
 
 ### File: `agent/optimize/call_solver.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Call the optimization solver from the agent. |
-| **Function** | `optimize(day, site, tou, penalty_unmet=1e6)` → `SolveResult`. |
-| **What to implement** | Call `optimization.solver.solve(day, site, tou, penalty_unmet)` and return its result. |
+**Purpose**  
+Call the optimization solver from the agent with a consistent interface.
+
+**What it does**
+- **`optimize(day, site, tou, penalty_unmet=1e6)`** → `SolveResult`  
+  - Thin wrapper around `optimization.solver.solve`.
+  - Returns the `SolveResult` with schedule, cost, unmet, peak, and success flag.
+
+**How it works**
+- Simply calls `solve(day, site, tou, penalty_unmet)` and returns the result. Exists so the agent has a consistent interface and future versions can add objective selection or parameter tuning.
+
+---
 
 ### File: `agent/validate/validate.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Run the constraint checker on the agent's schedule. |
-| **Function** | `validate(schedule, day, site)` → `CheckResult`. |
-| **What to implement** | Call `constraints.checker.check(schedule, day, site)` and return the result. |
+**Purpose**  
+Run the constraint checker on the agent's schedule.
+
+**What it does**
+- **`validate(schedule, day, site)`** → `CheckResult`  
+  - Thin wrapper around `constraints.checker.check`.
+  - Validates availability, per-charger limits, site power cap, and energy delivery.
+
+**How it works**
+- Simply calls `check(schedule, day, site)` and returns the result. Exists so the agent has a consistent validation interface.
+
+---
 
 ### File: `agent/refine/refine.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | On solver failure or validation failures, optionally adjust inputs and re-solve. |
-| **Function** | `refine(day, site, tou, solve_result, max_retries=1)` → `(DaySessions, SiteConfig, TOUConfig, SolveResult)`. |
-| **What to implement** | For v1: return `(day, site, tou, solve_result)` unchanged. Optionally: if `not solve_result.success` and `max_retries > 0`, adjust (e.g. relax bounds) and call the solver again; return the new or same result. |
+**Purpose**  
+On solver failure or validation failures, optionally adjust inputs and re-solve.
+
+**What it does**
+- **`refine(day, site, tou, solve_result, max_retries=1)`** → `(DaySessions, SiteConfig, TOUConfig, SolveResult)`  
+  - For v1, this is a simple pass-through: returns the inputs unchanged.
+  - Future versions may implement refinement strategies such as:
+    - Relaxing the site power cap if the solver fails.
+    - Reducing energy demands if they cannot be met.
+    - Adjusting session windows to resolve conflicts.
+
+**How it works**
+- Currently returns `(day, site, tou, solve_result)` unchanged. The `max_retries` parameter is accepted but unused in v1.
+
+---
 
 ### File: `agent/explain/explain.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Turn numeric results into a short natural-language explanation that uses only computed facts (grounded). |
-| **Functions** | `extract_facts(schedule, total_cost_usd, peak_load_kw, total_unmet_kwh, uncontrolled_cost_usd=None)` → `ScheduleFacts`. `generate_explanation(facts, use_llm=False)` → `str`. |
-| **What to implement** | **extract_facts**: Build `ScheduleFacts` with the given numbers; if `uncontrolled_cost_usd` is provided, set `cost_reduction_vs_uncontrolled_pct = 100·(uncontrolled - total_cost_usd)/uncontrolled`. **generate_explanation**: For v1 use a template string, e.g. "Total cost $X. Peak load Y kW. Unmet Z kWh. Cost reduction vs uncontrolled: W%." No LLM required for v1. |
+**Purpose**  
+Turn numeric results into a short natural-language explanation that uses only computed facts (grounded).
+
+**What it does**
+- **`ScheduleFacts`** dataclass: `total_cost_usd`, `peak_load_kw`, `total_unmet_kwh`, `cost_reduction_vs_uncontrolled_pct` (optional).
+
+- **`extract_facts(schedule, total_cost_usd, peak_load_kw, total_unmet_kwh, uncontrolled_cost_usd=None)`** → `ScheduleFacts`  
+  - Builds a `ScheduleFacts` dataclass from the given metrics.
+  - If `uncontrolled_cost_usd` is provided, computes `cost_reduction_vs_uncontrolled_pct = 100 * (uncontrolled - cost) / uncontrolled`.
+
+- **`generate_explanation(facts, use_llm=False)`** → `str`  
+  - For v1, uses a template string: "Total cost: $X. Peak load: Y kW. Unmet energy: Z kWh. Cost reduction vs uncontrolled: W%."
+  - The `use_llm` parameter is accepted but unused in v1.
+
+**How it works**
+- Explanations are strictly grounded in numeric facts. No hallucination is possible because the template only uses computed values from `ScheduleFacts`.
+
+---
 
 ### File: `agent/run.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Run the full agent pipeline once: plan → optimize → validate → optionally refine → explain. |
-| **Function** | `run_agent(day, site, tou, request="Minimize energy cost for this day.")` → `AgentResult(schedule, total_cost_usd, peak_load_kw, unmet_energy_kwh, feasible, explanation)`. |
-| **What to implement** | (1) Call `plan(request, day, site, tou)`; use `plan_result.day`, `.site`, `.tou`. (2) Call `optimize(day, site, tou)`. (3) Call `validate(schedule, day, site)`. (4) If not feasible and max_retries > 0, call `refine(...)` then `optimize` and `validate` again. (5) Compute total cost, peak, total unmet from solver/checker. (6) Optionally compute uncontrolled cost; call `extract_facts` and `generate_explanation`. (7) Return `AgentResult` with schedule, metrics, feasible, and explanation string. |
+**Purpose**  
+Run the full agent pipeline once: plan → optimize → validate → optionally refine → explain.
+
+**What it does**
+- **`AgentResult`** dataclass: `schedule`, `total_cost_usd`, `peak_load_kw`, `unmet_energy_kwh`, `feasible`, `explanation`.
+
+- **`run_agent(day, site, tou, request="Minimize energy cost for this day.", max_retries=1)`** → `AgentResult`  
+  - Orchestrates the full pipeline:
+    1. **Plan**: Call `plan(request, day, site, tou)` to get structured inputs.
+    2. **Optimize**: Call `optimize(day, site, tou)` to compute the schedule.
+    3. **Validate**: Call `validate(schedule, day, site)` to check constraints.
+    4. **Refine**: If solver failed and `max_retries > 0`, call `refine(...)` and re-validate (v1: no-op).
+    5. **Metrics**: Extract total cost, peak load, and total unmet energy from the solver result.
+    6. **Baseline comparison**: Compute uncontrolled (charge-asap) schedule and its cost.
+    7. **Explain**: Call `extract_facts` and `generate_explanation` to produce a grounded summary.
+  - Returns `AgentResult` with schedule, metrics, feasibility, and explanation.
+
+**How it works**
+- The pipeline is modular: each step (plan, optimize, validate, refine, explain) is a separate function call. This makes it easy to extend or replace individual components in future versions.
 
 ---
 
@@ -486,18 +550,65 @@ Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → 
 
 ### File: `scripts/run_agent.py`
 
-| Item | Description |
-|------|-------------|
-| **Purpose** | Run the agent from the command line and optionally save the same plots as Phase A. |
-| **What to implement** | (1) Load `.env`. (2) Parse CLI (`--site`, `--date`). (3) Call `load_sessions`, build `SiteConfig` and `TOUConfig` (same as Phase A and run_baseline). (4) Call `agent.run.run_agent(day, site, tou)`. (5) Print explanation and key metrics. (6) Optionally call `plot_schedule` and `plot_load_profile` and save to `experiments/agent_schedule.png` and `experiments/agent_load.png`. |
-| **Config** | Use the same site and TOU config as baseline so baseline vs agent comparisons are fair. |
+**Purpose**  
+Run the agent from the command line and optionally save the same plots as Phase A.
+
+**What it does**
+- **CLI**: `--site` (default `caltech`), `--date` (default yesterday), `--request` (default "Minimize energy cost for this day.").
+- **Environment**: Loads `.env` from project root (for `ACN_DATA_API_TOKEN`).
+
+**How it works (step-by-step)**
+1. Parse arguments; resolve `day_date`.
+2. Call `load_sessions(site_id, day_date)`. On error, print message and exit.
+3. If no sessions returned, print message and exit.
+4. Build `SiteConfig(P_max_kw=50, n_steps=day.n_steps, dt_hours=day.dt_hours)` and `TOUConfig(rates_per_kwh=default_tou_rates(day.n_steps))` (same as Phase A and baseline).
+5. Call `run_agent(day, site, tou, request=args.request)`.
+6. Call `check(schedule, day, site)` for independent verification.
+7. Compute uncontrolled schedule and cost; call `compute_metrics(...)`.
+8. Print: explanation, feasibility, violations (if any, first 10), total cost, peak, total unmet, % fully served, % cost reduction vs uncontrolled.
+9. If `experiments/` exists, call `plot_schedule` and `plot_load_profile` and save to `experiments/agent_schedule.png` and `experiments/agent_load.png`.
+
+**Usage**  
+From project root with venv active:  
+`python -m scripts.run_agent --site caltech --date 2019-06-15`
+
+**Config**  
+Uses the same site and TOU config as Phase A and baseline so comparisons are fair.
 
 ---
 
-## 3.3 Summary for Phase C
+## 3.3 End-to-end data flow (Phase C)
 
-- No new optimization or visualization logic: the agent uses the existing solver, checker, and plots.
-- Implement the agent modules so that `run_agent(day, site, tou)` returns schedule, metrics, and explanation; then add `run_agent.py` to run it from the CLI and optionally produce plots.
+```
+.env (ACN_DATA_API_TOKEN)
+        │
+        ▼
+scripts/run_agent.py  ──►  data/loader/loader.py  ──►  DaySessions (list of Session)
+        │
+        ├── config/site.py  ──►  SiteConfig, TOUConfig (default_tou_rates)
+        │
+        └── agent/run.py  ──►  run_agent()
+                │
+                ├── agent/plan/plan.py  ──►  plan()  ──►  PlanResult
+                │
+                ├── agent/optimize/call_solver.py  ──►  optimize()  ──►  SolveResult
+                │       └── optimization/solver.py  ──►  CVXPY solve
+                │
+                ├── agent/validate/validate.py  ──►  validate()  ──►  CheckResult
+                │       └── constraints/checker.py  ──►  check()
+                │
+                ├── agent/refine/refine.py  ──►  refine()  ──►  (v1: pass-through)
+                │
+                ├── evaluation/metrics  ──►  charge_asap_schedule(), total_cost()
+                │
+                └── agent/explain/explain.py  ──►  extract_facts(), generate_explanation()
+                        │
+                        ▼
+                AgentResult (schedule, cost, peak, unmet, feasible, explanation)
+                        │
+                        ▼
+                visualization/plots.py  ──►  experiments/agent_*.png
+```
 
 ---
 
@@ -507,4 +618,4 @@ Phase C implements the **agentic pipeline** (Plan → Optimize → Validate → 
 |-------------|--------|--------|
 | Data loader, standardized session format, constraint checker | ✅ Done | `data/format/schema.py`, `data/loader/loader.py`, `constraints/checker.py`; loader uses Eve API; checker has violations and tolerance. |
 | Prompting baseline implementation and evaluation scripts | ✅ Done | `baseline/prompt.py`, `parse.py`, `run.py`; `scripts/run_baseline.py`; reuses Phase A metrics and checker. |
-| Agentic pipeline v1 with optimization solver and visualization | ✅ Solver + viz done in Phase A; 🔲 agent wiring | Solver in `optimization/solver.py`; plots in `visualization/plots.py`. Implement agent plan, optimize, validate, refine, explain, run and `scripts/run_agent.py`. |
+| Agentic pipeline v1 with optimization solver and visualization | ✅ Done | `agent/plan`, `agent/optimize`, `agent/validate`, `agent/refine`, `agent/explain`, `agent/run.py`; `scripts/run_agent.py`; reuses solver, checker, metrics, and plots from Phase A. |
