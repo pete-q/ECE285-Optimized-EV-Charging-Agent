@@ -29,7 +29,7 @@
 \maketitle
 
 \begin{abstract}
-We are building and benchmarking an agentic assistant that produces feasible day-ahead EV charging schedules for a parking facility using real Caltech ACN-Data sessions, with the primary objective of minimizing time-of-use (TOU) energy cost while respecting per-session limits and an aggregate site power cap. By the midway milestone, we have implemented the full Phase A pipeline (data loader $\rightarrow$ standardized session format $\rightarrow$ constraint checker $\rightarrow$ CVXPY optimizer $\rightarrow$ metrics and plots), a direct LLM prompting baseline (prompt builder, robust parser, and evaluation script), and an initial agentic pipeline (Plan $\rightarrow$ Optimize $\rightarrow$ Validate $\rightarrow$ Refine $\rightarrow$ Explain) that reuses the optimizer and checker and produces grounded explanations derived from computed schedule statistics. Preliminary benchmarks across 5 days reveal a strong improvement: on typical days the agent achieves 86--98\% of sessions fully served with 2.6--11 kWh unmet, while the LLM baseline serves only 0--12\% of sessions with 207--586 kWh left unserved in spite of reporting lower costs by failing to deliver energy. On one high-congestion day (66 sessions), even the optimizer leaves 60 kWh unmet, reflecting genuine capacity limits rather than algorithmic failure. These results demonstrate that offloading constraint satisfaction to an optimizer can dramatically improve service reliability. Next, we will extend the benchmark with additional days, implement a baseline repair step, and evaluate explanation faithfulness; stretch experiments include peak-penalized objectives and interactive what if queries.
+We are building and benchmarking an agentic assistant that produces feasible day-ahead EV charging schedules for a parking facility using real Caltech ACN-Data sessions, with the primary objective of minimizing time-of-use (TOU) energy cost while respecting per-session limits and an aggregate site power cap. By the midway milestone, we have implemented the full Phase A pipeline (data loader $\rightarrow$ standardized session format $\rightarrow$ constraint checker $\rightarrow$ CVXPY optimizer $\rightarrow$ metrics and plots), a direct LLM prompting baseline (prompt builder, robust parser, and evaluation script), and an initial agentic pipeline (Plan $\rightarrow$ Optimize $\rightarrow$ Validate $\rightarrow$ Refine $\rightarrow$ Explain) that reuses the optimizer and checker and produces grounded explanations derived from computed schedule statistics. Preliminary benchmarks across 5 days reveal a strong improvement where on typical days the agent achieves 86--98\% of sessions fully served with 2.6--11 kWh unmet, while the LLM baseline serves only 0--12\% of sessions with 207--586 kWh left unserved in spite of reporting lower costs by failing to deliver energy. On one high-congestion day (66 sessions), even the optimizer leaves 60 kWh unmet, reflecting genuine capacity limits rather than algorithmic failure. These results demonstrate that offloading constraint satisfaction to an optimizer can dramatically improve service reliability. Next, we will extend the benchmark with additional days, implement a baseline repair step, and evaluate explanation faithfulness; stretch experiments include peak-penalized objectives and interactive what if queries.
 \end{abstract}
 
 \section{Introduction}
@@ -109,6 +109,7 @@ The baseline parser includes both a primary format parser (expecting ``Session i
 \textbf{Agent explanations}
 The agent generates grounded explanations using a template that references only computed schedule statistics. Example output for 2019-05-01: ``Total cost: \$111.57. Peak load: 50.0 kW. Unmet energy: 2.59 kWh. Cost reduction vs uncontrolled: 25.6\%.'' These explanations are verifiably faithful by construction, with no hallucinated numbers.
 
+\newpage
 \subsection{Current Results}
 A preliminary multiday benchmark across 5 days from the Caltech ACN-Data dataset with varying congestion levels and session counts is summarized in Table~\ref{tab:results} for key metrics in each pipeline:
 
@@ -134,7 +135,7 @@ Baseline & 2019-06-03 & 39 & 0.90   & 335.59 & 0.0  & 40 \\
 \end{table}
 
 \begin{itemize}
-  \item \textbf{Service quality}: On 4 of 5 days, the agent/optimizer achieves 86--98\% of sessions fully served, while the baseline serves only 0--12\%. On one high-congestion day (66 sessions, 2018-11-05), even the optimizer achieves only 26\% due to genuine capacity limits. This is the most critical distinction: the baseline's schedules are nearly unusable.
+  \item \textbf{Service quality}: On 4 of 5 days, the agent/optimizer achieves 86--98\% of sessions fully served, while the baseline serves only 0--12\%. On one high congestion day (66 sessions, 2018-11-05), even the optimizer achieves only 26\% due to genuine capacity limits. This is the most critical distinction: the baseline's schedules are nearly unusable.
   \item \textbf{Unmet energy}: Agent unmet energy ranges from 2.6--11 kWh on typical days and up to 43--60 kWh on congested days, while baseline unmet energy ranges from 207--586 kWh leaving over 90\% of requested energy undelivered.
   \item \textbf{Cost interpretation}: The baseline reports lower costs (e.g., \$0.90 vs.\ \$76.40 on 2019-06-03), but this can be misleading. The baseline achieves low cost by delivering almost no energy. A fair comparison would necessitate penalizing unmet demand.
   \item \textbf{Constraint violations}: The baseline produces 16--92 constraint violations per day vs.\ 1--49 from the agent. Agent violations are exclusively energy based (from the slack formulation when demand exceeds capacity) while baseline violations include availability and per charger limit breaches.
@@ -149,7 +150,7 @@ The direct LLM baseline is unreliable for this task. Despite receiving a detaile
 \begin{itemize}
   \item Produces schedules that deliver only 0--12\% of requested energy (vs.\ 86--98\% for the agent on typical days).
   \item Generates 3--20$\times$ more constraint violations than the agent.
-  \item Often outputs sparse or near-zero power values, resulting in misleadingly low reported costs that mask complete service failure.
+  \item Often outputs sparse or near zero power values, resulting in misleadingly low reported costs that mask complete service failure.
 \end{itemize}
 This suggests that LLMs may struggle to reason about the complex structure of scheduling problems with interacting constraints (availability windows, power limits, site cap, energy balance).
 
