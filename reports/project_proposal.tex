@@ -1,0 +1,171 @@
+\documentclass{article}
+
+
+% if you need to pass options to natbib, use, e.g.:
+    % \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2022
+
+
+% ready for submission
+\usepackage[final]{neurips_2025}
+
+
+% to compile a preprint version, e.g., for submission to arXiv, add add the
+% [preprint] option:
+%     \usepackage[preprint]{neurips_2022}
+
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+%     \usepackage[final]{neurips_2022}
+
+
+% to avoid loading the natbib package, add option nonatbib:
+%    \usepackage[nonatbib]{neurips_2022}
+
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\newcommand{\new}[1]{{\color{red} #1}}
+
+\title{Project Proposal For ECE285}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+
+\author{%
+  Group Number \#10: Ryan Luo
+  % examples of more authors
+  \And
+  Peter Quawas \\
+  \And
+}
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \AND
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+}
+
+
+
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We propose to build and evaluate an agentic assistant that produces feasible day-ahead charging schedules for a parking facility using real EV arrival and departure session data. The assistant allocates charging currents over discrete time slots while respecting per-charger limits and an aggregate site power cap, with the primary objective of minimizing time-of-use energy cost. We will implement (i) an LLM prompting baseline and (ii) an agentic framework that parses requests, constructs an optimization problem, solves it, and generates a faithful natural language explanation tied to the computed schedule. We will benchmark both methods on cost reduction, feasibility, and explanation faithfulness, and we will report peak load as an operational metric. If time permits, we will add a stretch setting that includes a peak-based demand-charge proxy and support interactive what-if queries such as charger outages and demand surges.
+\end{abstract}
+
+\section{Introduction and Motivation}
+As EV adoption skyrockets, growing charging demand strains shared electrical infrastructure in workplaces, campuses, apartment garages, airports, and public parking facilities. In many sites, the number of chargers exceeds the facility's electrical capacity. Simple "charge immediately" policies can violate site power limits and increase operating cost under time-varying tariffs \cite{lee2020acn}. Practical scheduling must handle real arrivals and departures, oversubscribed infrastructure, and constraints such as limited station capabilities.
+
+Our goal is to build an assistant that, given a day of real charging sessions (arrival time, departure time, requested energy) and site constraints, outputs a feasible schedule that minimizes time-of-use energy cost and produces an explanation that matches the implemented schedule. The main research question is: \textit{Can an agentic LLM system reliably produce lower cost, more constraint-feasible charging schedules and more faithful explanations than a direct prompting baseline?}
+
+\section{Related Work}
+Prior work on EV charging optimization includes large-scale deployments and online scheduling approaches \cite{wang2016survey,mukherjee2015review}. The Adaptive Charging Network (ACN) uses model predictive control and convex optimization to compute charging rates while incorporating infrastructure constraints \cite{lee2020acn}. However, these systems generally do not focus on interactive assistants that translate user intents into schedules and explain those schedules with verifiable grounding.
+
+Electricity costs may include both energy charges (total kWh) and demand charges (based on peak power), with time-of-use rates varying substantially across the day \cite{wang2016survey}. In this project, we treat time-of-use energy cost minimization as the primary objective and report peak load as an operational metric. As a stretch goal, we will incorporate a peak penalty as a demand-charge proxy to study the cost to peak tradeoff.
+
+\section{Problem Statement}
+We consider a parking facility over a fixed horizon (one day) partitioned into equal steps of length $\Delta$ (e.g., 5 or 15 minutes). We are given a set of EV charging sessions $\mathcal{S}$, each with arrival time $a_i$, departure time $d_i$, requested energy $E_i$ (kWh), assigned charger, and per-session max charging power or current limit.
+
+Decision variables are charging rates $p_i(t)$ (kW) for each EV $i$ at each time $t$. Constraints include:
+\begin{itemize}
+  \item availability: $p_i(t)=0$ for $t \notin [a_i,d_i)$,
+  \item per-charger limits: $0 \le p_i(t) \le \bar{p}_i$,
+  \item site power cap: $\sum_{i} p_i(t) \le P_{\max}(t)$,
+  \item energy delivery with slack: $\sum_t p_i(t)\Delta + u_i = E_i,\; u_i \ge 0$.
+\end{itemize}
+
+We minimize total energy cost as the primary objective and report peak load as an operational metric:
+\begin{itemize}
+  \item minimize energy cost (primary): $\min \sum_t c(t)\sum_i p_i(t)\Delta + M\sum_i u_i$, where $c(t)$ is the time-varying electricity price and $M$ is a large penalty on unmet energy,
+  \item report peak load (operational metric): $\max_t \sum_i p_i(t)$,
+  \item peak-penalized objective (stretch): $\min \left(\sum_t c(t)\sum_i p_i(t)\Delta + M\sum_i u_i + \lambda \max_t \sum_i p_i(t)\right)$.
+\end{itemize}
+
+Agent outputs include (1) a schedule matrix $p_i(t)$, (2) a facility load profile with cost and unmet-energy breakdown, and (3) an explanation grounded in computed schedule statistics.
+
+\section{Proposed Approach}
+
+\subsection{Baseline: Direct LLM Prompting}
+A single-shot approach where the LLM receives facility constraints, session data, and objective definition in one prompt and outputs a complete charging schedule. We evaluate the generated schedule for cost, unmet energy, and constraint violations. If we include repair, it will be a single clearly defined projection step, and we will report metrics both before and after projection.
+
+\subsection{Agentic Assistant}
+An agent that uses optimization tools in a structured loop:
+
+\begin{enumerate}
+  \item \textbf{Plan}: LLM parses user request to extract objective, time horizon, constraints, and session parameters.
+  
+  \item \textbf{Optimize}: LLM formulates and calls CVXPY to solve the cost-minimization problem with unmet-energy slack using time-varying rates $c(t)$. Peak load is computed from the resulting schedule for reporting.
+  
+  \item \textbf{Validate}: LLM calls a constraint checker to verify all limits and compute unmet energy and peak load.
+  
+  \item \textbf{Refine}: If there are parsing or implementation errors that cause invalid inputs, the LLM corrects the structured representation and returns to step 2.
+  
+  \item \textbf{Explain}: LLM extracts schedule-derived facts (cost, savings, peak load, unmet energy, binding constraint times) and generates a natural language explanation grounded in these computed artifacts.
+\end{enumerate}
+
+The key difference from baseline is that the agent relies on an explicit optimizer and validator, and it generates explanations from computed artifacts to improve faithfulness. If time permits, the agent will also support interactive what-if queries (charger outage, demand surge) by modifying constraints and re-solving.
+
+\section{Benchmark and Evaluation Plan}
+\textbf{Data}: Caltech ACN-Data dataset \cite{acndata} with real charging sessions.
+
+\textbf{Metrics}:
+\begin{itemize}
+  \item \textbf{Objective performance}: Total energy cost (\$), percent cost reduction vs. an uncontrolled reference policy (charge-asap subject to caps), peak load (kW)
+  \item \textbf{Feasibility and service}: Total unmet energy $\sum_i u_i$ (kWh), \% EVs fully served ($u_i=0$), constraint violation count
+  \item \textbf{Explanation faithfulness}: Automated verification that numeric claims match computed schedule statistics (cost, savings, peak load, unmet energy)
+  \item \textbf{Cost-peak tradeoff (stretch)}: Sweep $\lambda$ in the peak-penalized objective and report the tradeoff between cost and peak load
+\end{itemize}
+
+\textbf{Comparison}: Baseline vs agent across 5$+$ days with varying congestion levels and a fixed time-of-use price vector per experiment.
+
+\section{Deliverables and Timeline}
+\textbf{Midway deliverables (Week 4 to Week 7):}
+\begin{itemize}
+  \item Data loader, standardized session format, and constraint checker
+  \item Prompting baseline implementation and evaluation scripts
+  \item Agentic pipeline v1 with optimization solver and visualization
+\end{itemize}
+
+\textbf{Final deliverables (Week 7 to Week 10):}
+\begin{itemize}
+  \item Full benchmark on multiple days with tables for cost, service, and feasibility
+  \item Faithfulness evaluation suite for explanations with qualitative examples
+  \item Stretch: peak-penalty experiments and interactive what-if queries with recomputation and comparison
+  \item Final report with ablations comparing baseline vs agent variants
+\end{itemize}
+
+\bibliography{ref}
+\bibliographystyle{abbrvnat}
+
+\end{document}

@@ -1,0 +1,186 @@
+\documentclass{article}
+
+% ready for submission
+\usepackage[preprint]{neurips_2025}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+\usepackage{graphicx}       % figures
+\newcommand{\new}[1]{{\color{red} #1}}
+
+\title{Midway Milestone Report For ECE285}
+
+\author{%
+  Group Number \#10: Ryan Luo
+  \And
+  Peter Quawas \\
+  \And
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We are building and benchmarking an agentic assistant that produces feasible day-ahead EV charging schedules for a parking facility using real Caltech ACN-Data sessions, with the primary objective of minimizing time-of-use (TOU) energy cost while respecting per-session limits and an aggregate site power cap. By the midway milestone, we have implemented the full Phase A pipeline (data loader $\rightarrow$ standardized session format $\rightarrow$ constraint checker $\rightarrow$ CVXPY optimizer $\rightarrow$ metrics and plots), a direct LLM prompting baseline (prompt builder, robust parser, and evaluation script), and an initial agentic pipeline (Plan $\rightarrow$ Optimize $\rightarrow$ Validate $\rightarrow$ Refine $\rightarrow$ Explain) that reuses the optimizer and checker and produces grounded explanations derived from computed schedule statistics. Preliminary benchmarks across 5 days reveal a strong improvement where on typical days the agent achieves 86--98\% of sessions fully served with 2.6--11 kWh unmet, while the LLM baseline serves only 0--12\% of sessions with 207--586 kWh left unserved in spite of reporting lower costs by failing to deliver energy. On one high-congestion day (66 sessions), even the optimizer leaves 60 kWh unmet, reflecting genuine capacity limits rather than algorithmic failure. These results demonstrate that offloading constraint satisfaction to an optimizer can dramatically improve service reliability. Next, we will extend the benchmark with additional days, implement a baseline repair step, and evaluate explanation faithfulness; stretch experiments include peak-penalized objectives and interactive what if queries.
+\end{abstract}
+
+\section{Introduction}
+As EV adoption skyrockets, growing charging demand strains shared electrical infrastructure in workplaces, campuses, apartment garages, airports, and public parking facilities. In many sites, the number of chargers exceeds the facility's electrical capacity. Simple "charge immediately" policies can violate site power limits and increase operating cost under time-varying tariffs \cite{lee2020acn}. Practical scheduling must handle real arrivals and departures, oversubscribed infrastructure, and constraints such as limited station capabilities.
+
+Our goal is to build an assistant that, given a day of real charging sessions (arrival time, departure time, requested energy) and site constraints, outputs a feasible schedule that minimizes TOU energy cost and produces an explanation to accompany the implemented schedule. The main research question is: Can an agentic LLM system reliably produce lower cost, more constraint-feasible charging schedules and more faithful explanations than a direct prompting baseline?
+
+\section{Related Work}
+Prior work on EV charging optimization includes large scale deployments and online scheduling approaches \cite{wang2016survey,mukherjee2015review}. The Adaptive Charging Network (ACN) uses model predictive control and convex optimization to compute charging rates while incorporating infrastructure constraints \cite{lee2020acn}. However, these systems generally do not focus on interactive assistants that translate user intents into schedules and explain those schedules with verifiable grounding.
+
+\section{Methodology}
+\subsection{Baseline: Direct LLM Prompting}
+A single shot approach where the LLM receives facility constraints, session data, and objective definition in one prompt and outputs a complete charging schedule. We evaluate the generated schedule for cost, unmet energy, and constraint violations. If including repair, it will be a single clearly defined projection step, and we will report metrics both before and after projection.
+
+\subsection{Agentic Assistant}
+An agent that uses optimization tools in a structured loop:
+\begin{enumerate}
+  \item \textbf{Plan}: LLM parses user request to extract objective, time horizon, constraints, and session parameters.
+  \item \textbf{Optimize}: LLM formulates and calls CVXPY to solve the cost-minimization problem with unmet-energy slack using time varying rates $c(t)$. Peak load is computed from the resulting schedule for reporting.
+  \item \textbf{Validate}: LLM calls a constraint checker to verify all limits and compute unmet energy and peak load.
+  \item \textbf{Refine}: If there are parsing or implementation errors that cause invalid inputs, LLM corrects the structured representation and returns to step 2.
+  \item \textbf{Explain}: LLM extracts schedule-derived facts (cost, savings, peak load, unmet energy, binding constraint times) and generates a natural language explanation grounded in these computed artifacts.
+\end{enumerate}
+
+The key difference from baseline is that the agent relies on an explicit optimizer and validator. It generates explanations from computed artifacts to improve faithfulness. If time permits, the agent will also support interactive what if queries (charger outage, demand surge) by modifying constraints and resolving.
+
+\section{Benchmark and Evaluation Plan}
+\textbf{Data}: Caltech ACN-Data dataset \cite{acndata} with real charging sessions.
+
+\textbf{Metrics}:
+\begin{itemize}
+  \item \textbf{Objective performance}: Total energy cost (\$), percent cost reduction vs.\ an uncontrolled reference policy (ex: charge ASAP subject to caps), peak load (kW)
+  \item \textbf{Feasibility and service}: Total unmet energy $\sum_i u_i$ (kWh), \% EVs fully served ($u_i=0$), constraint violation count
+  \item \textbf{Explanation faithfulness}: Automated verification that numeric claims match computed schedule statistics (cost, savings, peak load, unmet energy)
+  \item \textbf{Cost-peak tradeoff (stretch)}: Sweep $\lambda$ in the peak penalized objective and report the tradeoff between cost and peak load
+\end{itemize}
+
+\textbf{Comparison}: Baseline vs.\ agent across 5$+$ days with varying congestion levels and a fixed TOU price vector per experiment.
+
+\section{Experiments (Preliminary Results)}
+\subsection{Experimental setup (midway)}
+Our current implementation supports three end-to-end runs that share a common data format, site configuration, and evaluation metrics:
+\begin{itemize}
+  \item \textbf{Phase A (optimizer reference)}: Load sessions from ACN Data for a given site/day, solve the convex optimization problem, validate constraints, compute metrics (cost, peak, unmet energy, percent fully served, cost reduction vs.\ uncontrolled), and save schedule / load profile plots.
+  \item \textbf{Phase B (LLM baseline)}: Build a single prompt containing constraints + session table, query an LLM for a schedule matrix, parse the response into a numeric schedule, validate constraints, and compute the same metrics as Phase A.
+  \item \textbf{Phase C (agent v1)}: Run Plan $\rightarrow$ Optimize $\rightarrow$ Validate $\rightarrow$ Refine $\rightarrow$ Explain, where optimization and validation reuse the Phase A solver/checker. The agent explanation is computed from schedule derived facts to ensure grounding.
+\end{itemize}
+
+\subsection{Implementation status}
+Table~\ref{tab:midway_status} summarizes midway deliverables and what is currently implemented.
+
+\begin{table}[t]
+\centering
+\begin{tabular}{p{0.60\linewidth}p{0.28\linewidth}}
+\toprule
+\textbf{Deliverable} & \textbf{Status (Midway)} \\
+\midrule
+Data loader + standardized session format + constraint checker & Complete \\
+Prompting baseline + evaluation scripts & Complete \\
+Agentic pipeline v1 (optimize/validate/explain) + visualization & Complete \\
+\bottomrule
+\end{tabular}
+\caption{Midway deliverable status. The current codebase supports end-to-end runs for Phase A (optimizer reference), Phase B (LLM baseline), and Phase C (agent v1), all producing comparable metrics and optional plots.}
+\label{tab:midway_status}
+\end{table}
+
+\subsection{Qualitative outputs and sanity checks}
+\textbf{Constraint checking and tests}
+We implemented unit tests for the constraint checker covering availability violations, per session max power violations, site cap violations, and energy delivery constraints. All 7 tests passed, validating that the checker correctly distinguishes feasible from infeasible schedules and categorizes violation types.
+
+\textbf{End-to-end runs and plots}
+For each pipeline (optimizer, baseline, and agent), the scripts save (i) a schedule heatmap showing power allocation across sessions and time steps and (ii) an aggregate load profile plot. Visual inspection confirms that agent/optimizer schedules concentrate charging in off peak (low price) windows while respecting the 50 kW site cap and that total load peaks align with expected congestion periods. Baseline schedules however show sparse or erratic patterns that fail to deliver requested energy.
+
+\textbf{Baseline parsing robustness}
+The baseline parser includes both a primary format parser (expecting ``Session i: p0 p1 ...'') and a fallback numeric-matrix parser. This design allows evaluation to continue even when LLM output deviates from the requested format. In practice, parsing succeeded on all 5 test days, confirming that baseline failures may be primarily semantic (wrong power values) rather than syntactic (unparseable output).
+
+\textbf{Agent explanations}
+The agent generates grounded explanations using a template that references only computed schedule statistics. Example output for 2019-05-01: ``Total cost: \$111.57. Peak load: 50.0 kW. Unmet energy: 2.59 kWh. Cost reduction vs uncontrolled: 25.6\%.'' These explanations are verifiably faithful by construction, with no hallucinated numbers.
+
+\newpage
+\subsection{Current Results}
+A preliminary multiday benchmark across 5 days from the Caltech ACN-Data dataset with varying congestion levels and session counts is summarized in Table~\ref{tab:results} for key metrics in each pipeline:
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{llrrrrr}
+\toprule
+\textbf{Pipeline} & \textbf{Date} & \textbf{Sessions} & \textbf{Cost (\$)} & \textbf{Unmet (kWh)} & \textbf{Served (\%)} & \textbf{Violations} \\
+\midrule
+Agent    & 2019-05-01 & 44 & 111.57 & 2.59  & 97.7 & 1 \\
+Baseline & 2019-05-01 & 44 & 33.39  & 445.36 & 6.8  & 45 \\
+\midrule
+Agent    & 2019-05-15 & 43 & 77.68  & 11.22 & 93.0 & 3 \\
+Baseline & 2019-05-15 & 43 & 48.19  & 297.67 & 11.6 & 66 \\
+\midrule
+Agent    & 2019-06-03 & 39 & 76.40  & 5.91  & 92.3 & 3 \\
+Baseline & 2019-06-03 & 39 & 0.90   & 335.59 & 0.0  & 40 \\
+\bottomrule
+\end{tabular}
+\caption{Preliminary benchmark results comparing agent (optimizer-based) vs.\ LLM baseline across three representative days}
+\label{tab:results}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{Service quality}: On 4 of 5 days, the agent/optimizer achieves 86--98\% of sessions fully served, while the baseline serves only 0--12\%. On one high congestion day (66 sessions, 2018-11-05), even the optimizer achieves only 26\% due to genuine capacity limits. This is the most critical distinction: the baseline's schedules are nearly unusable.
+  \item \textbf{Unmet energy}: Agent unmet energy ranges from 2.6--11 kWh on typical days and up to 43--60 kWh on congested days, while baseline unmet energy ranges from 207--586 kWh leaving over 90\% of requested energy undelivered.
+  \item \textbf{Cost interpretation}: The baseline reports lower costs (e.g., \$0.90 vs.\ \$76.40 on 2019-06-03), but this can be misleading. The baseline achieves low cost by delivering almost no energy. A fair comparison would necessitate penalizing unmet demand.
+  \item \textbf{Constraint violations}: The baseline produces 16--92 constraint violations per day vs.\ 1--49 from the agent. Agent violations are exclusively energy based (from the slack formulation when demand exceeds capacity) while baseline violations include availability and per charger limit breaches.
+\end{itemize}
+
+\subsection{Analysis}
+\textbf{Current Functionality}
+The shared ``single source of truth'' data format and checker enable consistent evaluation across optimizer, baseline, and agent. The optimizer-based path (Phase A / Phase C) provides a stable reference for feasibility and cost computation, and the agent's grounded explanation strategy avoids hallucinated numbers by construction. Across all 5 test days, the agent produced explanations that exactly match computed statistics (e.g., ``Total cost: \$111.57. Peak load: 50.0 kW. Unmet energy: 2.59 kWh. Cost reduction vs uncontrolled: 25.6\%.''), demonstrating 100\% explanation faithfulness.
+
+\textbf{Baseline Weakness \& Limitations}
+The direct LLM baseline is unreliable for this task. Despite receiving a detailed prompt with session tables and explicit format instructions, the baseline:
+\begin{itemize}
+  \item Produces schedules that deliver only 0--12\% of requested energy (vs.\ 86--98\% for the agent on typical days).
+  \item Generates 3--20$\times$ more constraint violations than the agent.
+  \item Often outputs sparse or near zero power values, resulting in misleadingly low reported costs that mask complete service failure.
+\end{itemize}
+This suggests that LLMs may struggle to reason about the complex structure of scheduling problems with interacting constraints (availability windows, power limits, site cap, energy balance).
+
+\textbf{Early Observations}
+The magnitude of baseline failure was larger than expected. The baseline fails at a semantic level as it does not reliably produce power values that sum to the requested energy even when the output parses correctly. For example, on 2019-06-03, the baseline delivered only \$0.90 of charging (335.6 kWh unmet out of $\sim$340 kWh requested), achieving 0\% of sessions fully served. This strongly motivates the agentic approach where offloading constraint satisfaction to a convex optimizer makes feasibility and service guarantees far more reliable. The preliminary results suggest that comparison should focus on service quality and unmet energy rather than raw cost since baseline cost numbers are meaningless without energy delivery.
+
+\section{Updated Plan}
+Relative to our proposal, the core scope is unchanged but we can now be more concrete about the remaining work.
+
+\subsection{Remaining work (Phase D: extended benchmark + faithfulness)}
+\begin{itemize}
+  \item \textbf{Extended benchmark} Expand the current 5 day benchmark with additional days and potentially other sites (JPL, office001) to increase data diversity. Finalize aggregated tables for the final report.
+  \item \textbf{Baseline repair} Add a single projection/repair step to map baseline schedules to a feasible set (e.g., clipping to per-session limits, enforcing availability windows, and projecting onto the site cap) to report metrics before/after repair to see if the baseline can become competitive.
+  \item \textbf{Explanation faithfulness suite} Implement an automated checker that extracts numeric claims (cost, peak load, unmet energy, percent savings) from each method's explanation and verify against computed metrics. The agent currently achieves 100\% faithfulness by construction. Test whether increasingly free form LLM explanations can maintain this.
+  \item \textbf{Ablations} Compare (i) agent with grounded template explanation vs.\ agent with freeform explanation; (ii) baseline with/without repair; (iii) penalty weight sensitivity for unmet energy.
+\end{itemize}
+
+\subsection{Stretch goals}
+\begin{itemize}
+  \item \textbf{Peak-penalty sweep} Add $\lambda \max_t \sum_i p_i(t)$ to the objective and sweep $\lambda$ to characterize the cost/peak tradeoff.
+  \item \textbf{Interactive what if queries} Extend planning to support constraint modifications (e.g., charger outage, increased arrivals, tighter site cap) and re-solve to return updated schedules and deltas in metrics.
+\end{itemize}
+
+\subsection{Expected final deliverables}
+\begin{itemize}
+  \item Final report with (i) full benchmark tables, (ii) qualitative examples contrasting baseline vs.\ agent, (iii) faithfulness evaluation results, and (iv) ablations and stretch results if completed.
+  \item Reproducible scripts to run the benchmark and export metrics/plots for inclusion in the report.
+\end{itemize}
+
+\bibliography{ref}
+\bibliographystyle{abbrvnat}
+
+\end{document}
