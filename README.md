@@ -54,7 +54,7 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 uv pip install -r requirements.txt
 ```
 
-### 3. Select the interpreter (Cursor / VS Code)
+### 3. Select interpreter
 
 1. **Cmd+Shift+P** (macOS) or **Ctrl+Shift+P** (Windows/Linux) → **Python: Select Interpreter**.
 2. Pick the entry for this project’s venv:
