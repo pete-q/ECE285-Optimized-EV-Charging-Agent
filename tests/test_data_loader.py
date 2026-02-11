@@ -1,7 +1,7 @@
 """Tests for data loader: API path (when ACN_DATA_API_TOKEN is set) and raw_session_to_standard."""
 
 import os
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 
 import pytest
 
@@ -35,16 +35,17 @@ def sample_day_sessions() -> DaySessions:
 
 def test_raw_session_to_standard() -> None:
     """raw_session_to_standard maps ACN-Data keys to Session with correct step indices."""
-    day_start = datetime(2024, 1, 15, 0, 0, 0)
-    # 8:00 = 8h from midnight -> step 8*4 = 32 at 15-min resolution; 12:00 -> step 48
+    day_start = datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc)
+    # 8:00 UTC = 8h from midnight UTC -> step 8*4 = 32 at 15-min resolution
+    # 12:00 UTC = step 48
     raw = {
         "sessionID": "test-123",
         "spaceID": "PS-001",
-        "connectionTime": "2024-01-15T08:00:00",
-        "disconnectTime": "2024-01-15T12:00:00",
+        "connectionTime": "Mon, 15 Jan 2024 08:00:00 GMT",
+        "disconnectTime": "Mon, 15 Jan 2024 12:00:00 GMT",
         "kWhDelivered": 14.5,
     }
-    s = raw_session_to_standard(raw, day_start=day_start, dt_hours=0.25, n_steps=96)
+    s = raw_session_to_standard(raw, day_start_utc=day_start, dt_hours=0.25, n_steps=96)
     assert s.session_id == "test-123"
     assert s.charger_id == "PS-001"
     assert s.energy_kwh == 14.5
