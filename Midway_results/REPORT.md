@@ -8,19 +8,19 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | phase_a | 2019-05-01 | 44 | 111.5657 | 50.0 | 2.587 | 97.73 | 25.55 | 1 | False |
 | agent | 2019-05-01 | 44 | 111.5657 | 50.0 | 2.587 | 97.73 | 25.55 | 1 | False |
-| baseline | 2019-05-01 | 44 | 3.36 | 28.0 | 452.485 | 4.55 | 97.76 | 44 | False |
+| baseline | 2019-05-01 | 44 | 53.13 | 28.0 | 424.677 | 11.36 | 64.55 | 65 | False |
 | phase_a | 2019-05-15 | 43 | 77.6805 | 49.9999 | 11.2158 | 93.02 | 33.99 | 3 | False |
 | agent | 2019-05-15 | 43 | 77.6805 | 49.9999 | 11.2158 | 93.02 | 33.99 | 3 | False |
-| baseline | 2019-05-15 | 43 | 28.8158 | 14.584 | 317.1282 | 4.65 | 75.51 | 43 | False |
+| baseline | 2019-05-15 | 43 | 50.0257 | 14.584 | 298.4122 | 6.98 | 57.49 | 70 | False |
 | phase_a | 2019-06-03 | 39 | 76.4003 | 49.9999 | 5.909 | 92.31 | 35.32 | 3 | False |
 | agent | 2019-06-03 | 39 | 76.4003 | 49.9999 | 5.909 | 92.31 | 35.32 | 3 | False |
-| baseline | 2019-06-03 | 39 | 19.95 | 7.0 | 333.722 | 2.56 | 83.11 | 40 | False |
+| baseline | 2019-06-03 | 39 | 1.7556 | 14.0 | 328.4588 | 0.0 | 98.51 | 43 | False |
 | phase_a | 2019-06-15 | 15 | 37.7195 | 27.4486 | 42.756 | 86.67 | 17.51 | 2 | False |
 | agent | 2019-06-15 | 15 | 37.7195 | 27.4486 | 42.756 | 86.67 | 17.51 | 2 | False |
-| baseline | 2019-06-15 | 15 | 5.3441 | 7.0 | 206.211 | 0.0 | 88.31 | 16 | False |
+| baseline | 2019-06-15 | 15 | 4.9241 | 7.0 | 209.711 | 0.0 | 89.23 | 16 | False |
 | phase_a | 2018-11-05 | 66 | 146.1518 | 50.0 | 60.2817 | 25.76 | 27.89 | 49 | False |
 | agent | 2018-11-05 | 66 | 146.1518 | 50.0 | 60.2817 | 25.76 | 27.89 | 49 | False |
-| baseline | 2018-11-05 | 66 | 33.81 | 21.0 | 586.0067 | 7.58 | 83.32 | 92 | False |
+| baseline | 2018-11-05 | 66 | 55.65 | 21.0 | 572.5427 | 9.09 | 72.54 | 140 | False |
 
 ## Plots
 
@@ -88,15 +88,34 @@ platform darwin -- Python 3.13.1, pytest-9.0.2, pluggy-1.6.0 -- /Users/pete/Desk
 cachedir: .pytest_cache
 rootdir: /Users/pete/Desktop/WI26/285/Project
 plugins: anyio-4.12.1
-collecting ... collected 7 items
+collecting ... collected 26 items
 
-tests/test_constraints.py::test_check_feasible_schedule PASSED           [ 14%]
-tests/test_constraints.py::test_check_availability_violation PASSED      [ 28%]
-tests/test_constraints.py::test_check_per_charger_violation PASSED       [ 42%]
+tests/test_baseline_parse.py::test_resample_exact_divisor PASSED         [  3%]
+tests/test_baseline_parse.py::test_resample_exact_match_is_identity PASSED [  7%]
+tests/test_baseline_parse.py::test_resample_close_too_long_truncates PASSED [ 11%]
+tests/test_baseline_parse.py::test_resample_close_too_short_pads PASSED  [ 15%]
+tests/test_baseline_parse.py::test_resample_far_off_returns_none PASSED  [ 19%]
+tests/test_baseline_parse.py::test_resample_48_to_96 PASSED              [ 23%]
+tests/test_baseline_parse.py::test_parse_24_values_resampled_to_96 PASSED [ 26%]
+tests/test_baseline_parse.py::test_parse_97_values_truncated_to_96 PASSED [ 30%]
+tests/test_baseline_parse.py::test_parse_94_values_padded_to_96 PASSED   [ 34%]
+tests/test_baseline_parse.py::test_parse_irrecoverable_length_skipped PASSED [ 38%]
+tests/test_baseline_parse.py::test_parse_mixed_good_and_resampled PASSED [ 42%]
+tests/test_constraints.py::test_check_feasible_schedule PASSED           [ 46%]
+tests/test_constraints.py::test_check_availability_violation PASSED      [ 50%]
+tests/test_constraints.py::test_check_per_charger_violation PASSED       [ 53%]
 tests/test_constraints.py::test_check_site_cap_violation PASSED          [ 57%]
-tests/test_constraints.py::test_check_energy_violation PASSED            [ 71%]
-tests/test_data_loader.py::test_raw_session_to_standard PASSED           [ 85%]
-tests/test_data_loader.py::test_load_sessions_with_api_returns_day_sessions PASSED [100%]
+tests/test_constraints.py::test_check_energy_violation PASSED            [ 61%]
+tests/test_data_loader.py::test_raw_session_to_standard PASSED           [ 65%]
+tests/test_data_loader.py::test_load_sessions_with_api_returns_day_sessions PASSED [ 69%]
+tests/test_faithfulness.py::test_parse_explanation_v1_template PASSED    [ 73%]
+tests/test_faithfulness.py::test_parse_explanation_without_pct PASSED    [ 76%]
+tests/test_faithfulness.py::test_parse_explanation_invalid_returns_none PASSED [ 80%]
+tests/test_faithfulness.py::test_check_faithfulness_facts_match PASSED   [ 84%]
+tests/test_faithfulness.py::test_check_faithfulness_facts_mismatch PASSED [ 88%]
+tests/test_faithfulness.py::test_check_faithfulness_text_matching_ground_truth PASSED [ 92%]
+tests/test_faithfulness.py::test_check_faithfulness_text_mismatch PASSED [ 96%]
+tests/test_faithfulness.py::test_check_faithfulness_unparseable PASSED   [100%]
 
-============================== 7 passed in 0.45s ===============================
+============================== 26 passed in 0.42s ==============================
 ```

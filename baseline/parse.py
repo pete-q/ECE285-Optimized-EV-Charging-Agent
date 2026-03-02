@@ -17,6 +17,51 @@ class ParseResult:
     error_message: Optional[str] = None
 
 
+# Fraction of n_steps a "close" parse is allowed to deviate before we give up.
+# e.g. 0.1 means ±10% — so for n_steps=96 we accept 87–105 values.
+_CLOSE_THRESHOLD = 0.10
+
+
+def _resample_to_n_steps(values: List[float], n_steps: int) -> Optional[List[float]]:
+    """Attempt to coerce `values` to exactly `n_steps` elements.
+
+    Handles the three error patterns observed in practice:
+
+    1. **Exact divisor** (e.g. 24 values when n_steps=96): each value represents
+       a whole number of steps; repeat each value (n_steps // len) times.
+    2. **Close length** (within ±CLOSE_THRESHOLD of n_steps): the model
+       miscounted by a few steps. Truncate if too long; pad with the last
+       value if too short.
+    3. **Far off**: return None so the caller can reject the line.
+
+    Args:
+        values: Parsed floats from one session line.
+        n_steps: Required number of steps.
+
+    Returns:
+        A list of exactly n_steps floats, or None if resampling is not possible.
+    """
+    n = len(values)
+    if n == n_steps:
+        return values
+
+    # Case 1: n divides evenly into n_steps (e.g. 24 hourly → 96 quarter-hour).
+    if n_steps % n == 0:
+        repeat = n_steps // n
+        return [v for v in values for _ in range(repeat)]
+
+    # Case 2: close to n_steps — truncate or pad.
+    close_range = max(1, int(n_steps * _CLOSE_THRESHOLD))
+    if abs(n - n_steps) <= close_range:
+        if n > n_steps:
+            return values[:n_steps]
+        # Pad with the last value to fill the gap.
+        return values + [values[-1]] * (n_steps - n)
+
+    # Case 3: too far off to rescue.
+    return None
+
+
 def parse_llm_schedule(
     response_text: str,
     day: DaySessions,
@@ -26,16 +71,18 @@ def parse_llm_schedule(
     Expected format (as specified in baseline.prompt.build_prompt):
         - One line per session, in any order.
         - Each line starts with: 'Session i:' where i is the integer session_index.
-        - After the colon, there are exactly n_steps floating-point numbers separated
-          by spaces; the k-th number is p[i,k] in kW at time step k.
+        - After the colon, there are n_steps floating-point numbers separated by
+          spaces; the k-th number is p[i,k] in kW at time step k.
 
-    This parser is deliberately simple and robust:
+    Robustness:
         - Ignores non-matching lines.
-        - Tolerates extra whitespace.
-        - Fails with a clear error message if:
-            * No valid session lines are found.
-            * A session appears more than once.
-            * A line has the wrong number of numeric values.
+        - Tolerates extra whitespace and duplicate session lines (first wins).
+        - When a session line has the wrong number of values, attempts resampling
+          via _resample_to_n_steps before rejecting:
+            * Exact divisor (e.g. 24 values for n_steps=96): each value is
+              repeated (n_steps // len) times (LLM used hourly resolution).
+            * Within ±10% of n_steps: truncate or pad with last value.
+            * Otherwise: session is skipped and logged as a warning.
     """
     n_sessions = len(day.sessions)
     n_steps = day.n_steps
@@ -95,15 +142,18 @@ def parse_llm_schedule(
             continue
 
         if used_rows[session_idx]:
-            errors.append(f"Duplicate schedule line for session {session_idx}.")
+            # First occurrence wins; silently skip duplicates.
             continue
 
         if len(values) != n_steps:
-            errors.append(
-                f"Session {session_idx} has {len(values)} values, "
-                f"but n_steps={n_steps} is required."
-            )
-            continue
+            resampled = _resample_to_n_steps(values, n_steps)
+            if resampled is None:
+                errors.append(
+                    f"Session {session_idx} has {len(values)} values "
+                    f"(n_steps={n_steps}); could not resample — skipping."
+                )
+                continue
+            values = resampled
 
         schedule[session_idx, :] = values
         used_rows[session_idx] = True
@@ -111,10 +161,9 @@ def parse_llm_schedule(
     def _fallback_matrix_parse(lines: List[str]) -> ParseResult:
         """Fallback parser: treat each numeric line as one session row.
 
-        This is used when the model did not include the 'Session i:' prefix but
-        still returned a numeric matrix. We take up to n_sessions lines that
-        contain exactly n_steps floating-point values and map them to sessions
-        in order (row 0 -> session 0, etc.).
+        Used when the model omitted 'Session i:' prefixes but still returned a
+        numeric matrix. Accepts lines whose length can be resampled to n_steps.
+        Maps rows to sessions in order (row 0 → session 0, etc.).
         """
 
         row_idx = 0
@@ -124,14 +173,16 @@ def parse_llm_schedule(
             tokens = line.strip().split()
             if not tokens:
                 continue
-            # Try to parse the whole line as floats.
             try:
                 values = [float(tok) for tok in tokens]
             except ValueError:
                 continue
 
             if len(values) != n_steps:
-                continue
+                resampled = _resample_to_n_steps(values, n_steps)
+                if resampled is None:
+                    continue
+                values = resampled
 
             schedule[row_idx, :] = values
             row_idx += 1

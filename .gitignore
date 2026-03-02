@@ -23,6 +23,7 @@ build/
 .env
 .env.*
 !.env.example
+.cursor/
 *.local
 *.pem
 *.key
