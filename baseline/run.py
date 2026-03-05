@@ -33,7 +33,7 @@ def run_baseline(
     tou: TOUConfig,
     api_key: Optional[str] = None,
     model: str = "gpt-4o-mini",
-    max_completion_tokens: int = 2048,
+    max_completion_tokens: int = 8192,
 ) -> BaselineResult:
     """Run baseline: build prompt, call OpenAI, parse response to schedule.
 
@@ -102,13 +102,12 @@ def run_baseline(
                 {
                     "role": "system",
                     "content": (
-                        "You are an assistant that outputs ONLY schedules in the "
-                        "specified machine-readable format. Do not add explanations "
-                        "or commentary outside the requested format. "
-                        "You must choose a schedule that attempts to deliver the "
-                        "requested energy_kwh for each session while respecting all "
-                        "constraints; schedules that leave almost all requested "
-                        "energy unmet (for example, all-zero power) are invalid."
+                        "You output ONLY the schedule: one line per session, each line "
+                        "'Session i: v0 v1 v2 ...' with exactly the number of space-separated "
+                        "floats specified in the prompt (one per time step). No commentary, "
+                        "no explanations. Follow the algorithm in the prompt. Ensure every "
+                        "line has the correct number of values; zeros outside each session's "
+                        "window, positive power inside until energy_kwh is delivered."
                     ),
                 },
                 {

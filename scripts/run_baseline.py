@@ -44,7 +44,7 @@ def main() -> None:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=1024,
+        default=8192,
         help="Maximum number of completion tokens to request from the model.",
     )
     args = parser.parse_args()

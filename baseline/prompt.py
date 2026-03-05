@@ -1,70 +1,30 @@
-"""Build the LLM prompt: objective, constraints, session table."""
+"""Build the LLM prompt: problem statement, constraints, and solution algorithm. No pre-solving."""
 
 from typing import Optional, Sequence
+
+import numpy as np
 
 from config.site import SiteConfig, TOUConfig
 from data.format.schema import DaySessions
 
 
-def _format_rates_summary(tou: TOUConfig) -> str:
-    """Return a short textual summary of TOU rates.
-
-    We do not rely on the model to reconstruct the exact per-step vector,
-    but giving min/mean/max helps it understand that energy is more expensive
-    in some parts of the day.
-    """
-    import numpy as np
-
-    rates = np.asarray(tou.rates_per_kwh).flatten()
-    if rates.size == 0:
-        return "The energy price is constant over the day."
-
-    min_rate = float(np.min(rates))
-    max_rate = float(np.max(rates))
-    mean_rate = float(np.mean(rates))
-    if abs(max_rate - min_rate) < 1e-9:
-        return f"The energy price is constant at ${min_rate:.3f} per kWh for all time steps."
-    return (
-        "Energy prices vary over the day. "
-        f"The minimum price is ${min_rate:.3f} per kWh, "
-        f"the maximum price is ${max_rate:.3f} per kWh, "
-        f"and the average price is ${mean_rate:.3f} per kWh."
-    )
-
-
-def _format_site_cap(site: SiteConfig) -> str:
-    """Return a human-readable description of the site power cap."""
-    import numpy as np
-
-    if np.isscalar(site.P_max_kw):
-        return f"The site power cap is {float(site.P_max_kw):.1f} kW at all time steps."
-
-    caps = np.asarray(site.P_max_kw).flatten()
-    if caps.size == 0:
-        return "There is effectively no site power cap specified."
-
-    min_cap = float(np.min(caps))
-    max_cap = float(np.max(caps))
-    if abs(max_cap - min_cap) < 1e-9:
-        return f"The site power cap is {min_cap:.1f} kW at all time steps."
-    return (
-        "The site power cap can vary over time. "
-        f"It is between {min_cap:.1f} kW and {max_cap:.1f} kW across the horizon."
-    )
-
-
 def _format_table(headers: Sequence[str], rows: Sequence[Sequence[object]]) -> str:
-    """Render a simple pipe-delimited table that is easy to parse."""
-    # Header line
-    header_line = " | ".join(headers)
-    # Separator line using dashes so the model sees a clear table structure
-    separator_line = " | ".join("---" for _ in headers)
+    """Pipe-delimited Markdown table."""
+    lines = [" | ".join(headers), " | ".join("---" for _ in headers)]
+    lines += [" | ".join(str(v) for v in row) for row in rows]
+    return "\n".join(lines)
 
-    def _format_row(row: Sequence[object]) -> str:
-        return " | ".join(str(value) for value in row)
 
-    body_lines = [_format_row(row) for row in rows]
-    return "\n".join([header_line, separator_line, *body_lines])
+def _peak_window_str(tou: TOUConfig) -> str:
+    """Short note on expensive steps for cost-aware section."""
+    rates = np.asarray(tou.rates_per_kwh).flatten()
+    if rates.size == 0 or abs(float(np.max(rates)) - float(np.min(rates))) < 1e-9:
+        return ""
+    threshold = float(np.min(rates)) + 0.9 * (float(np.max(rates)) - float(np.min(rates)))
+    peak = np.where(rates >= threshold)[0]
+    if peak.size == 0:
+        return ""
+    return f"steps {int(peak[0])}–{int(peak[-1])}"
 
 
 def build_prompt(
@@ -73,142 +33,268 @@ def build_prompt(
     tou: TOUConfig,
     instruction: Optional[str] = None,
 ) -> str:
-    """Assemble the baseline LLM prompt.
-
-    The prompt has three main parts:
-      1. Problem description: objective, time discretization, site power cap, and TOU summary.
-      2. Session table: one row per charging session, in the same order as `day.sessions`.
-      3. Output specification: what schedule to produce and in what format.
-
-    The schedule that the model returns must have:
-      - Shape: (number of sessions) x (number of time steps).
-      - Units: power in kW.
-      - Order: same session order as the table below, and time steps t = 0..n_steps-1.
-    """
-    lines: list[str] = []
-
+    """Assemble the baseline LLM prompt. The LLM solves the schedule from scratch."""
     n_sessions = len(day.sessions)
     n_steps = day.n_steps
     dt_hours = day.dt_hours
 
-    # --- 1. Problem description ---
-    lines.append("You are scheduling electric vehicle charging for one site over one day.")
-    lines.append(
-        "Your primary objective is to meet the energy_kwh demand of each session as well "
-        "as possible while still optimizing for low total energy cost under the TOU tariff."
-    )
-    lines.append(
-        "In other words, you should do your best to deliver the requested energy_kwh for "
-        "each session, subject to all constraints, and among all such schedules you "
-        "should prefer those with lower total cost."
-    )
-    lines.append("")
-    lines.append("Time discretization:")
-    lines.append(
-        f"- The day is divided into {n_steps} discrete time steps, "
-        f"each of duration {dt_hours:.3f} hours."
-    )
-    lines.append("- Time step t = 0 corresponds to midnight (start of the day).")
-    lines.append("- Time steps are indexed t = 0, 1, ..., n_steps-1.")
-    lines.append("")
-    lines.append("Site power cap:")
-    lines.append(f"- { _format_site_cap(site) }")
-    lines.append("")
-    lines.append("Energy prices:")
-    lines.append(f"- {_format_rates_summary(tou)}")
-    lines.append("")
+    cap_kw = float(site.P_max_kw) if np.isscalar(site.P_max_kw) else None
+    peak_str = _peak_window_str(tou)
 
-    # --- 2. Session table ---
+    lines: list[str] = []
+
+    # -------------------------------------------------------------------------
+    # 1. Output format first (so the model knows the exact shape before reasoning)
+    # -------------------------------------------------------------------------
+    lines.append("OUTPUT FORMAT (read this first):")
+    lines.append("")
     lines.append(
-        "Each row in the following table describes one charging session. "
-        "You must keep the sessions in exactly this order when you output the schedule."
+        f"You must output exactly {n_sessions} lines. Line i is for session i (i = 0 to {n_sessions - 1})."
     )
     lines.append(
-        "The arrival and departure indices use the same time steps described above, "
-        "and charging is only allowed for time steps t where "
-        "arrival_idx <= t < departure_idx."
+        f"Each line has the form: Session i: v0 v1 v2 ... v{n_steps - 1}"
+    )
+    lines.append(
+        f"That is exactly {n_steps} space-separated decimal numbers: one for time step 0, one for step 1, "
+        f"..., one for step {n_steps - 1}. No more, no fewer. "
+        f"The k-th number is the power (kW) for that session at time step k."
+    )
+    lines.append("")
+    lines.append(
+        f"Before you finish, verify: every line has exactly {n_steps} numbers. "
+        "Zeros are required outside each session's charging window; inside the window use positive power."
     )
     lines.append("")
 
-    headers = [
-        "session_index",
-        "session_id",
-        "arrival_idx",
-        "departure_idx",
-        "energy_kwh",
-        "charger_id",
-        "max_power_kw",
-    ]
-    rows: list[list[object]] = []
-    for index, sess in enumerate(day.sessions):
-        rows.append(
-            [
-                index,
-                sess.session_id,
-                sess.arrival_idx,
-                sess.departure_idx,
-                f"{sess.energy_kwh:.3f}",
-                sess.charger_id,
-                f"{sess.max_power_kw:.3f}",
-            ]
+    # -------------------------------------------------------------------------
+    # 2. Goal and priorities
+    # -------------------------------------------------------------------------
+    min_served = max(0, int(round(0.70 * n_sessions)))
+    lines.append("GOAL:")
+    lines.append(
+        f"  1. Fully serve as many sessions as possible (target ≥{min_served} of {n_sessions}). "
+        "A session is fully served when total energy delivered = energy_kwh (sum of power × dt over its window)."
+    )
+    lines.append(
+        "  2. Satisfy all constraints below. A schedule with delivered=0 for a session that could be charged is invalid."
+    )
+    if peak_str:
+        lines.append(
+            f"  3. After maximizing fully served: prefer cheaper time steps (avoid {peak_str} if possible)."
         )
+    lines.append("")
 
+    # -------------------------------------------------------------------------
+    # 3. Constraints
+    # -------------------------------------------------------------------------
+    lines.append("CONSTRAINTS:")
+    lines.append(
+        f"  • For session i: power is 0 for t < arrival_idx and t >= departure_idx. "
+        "Only steps in [arrival_idx, departure_idx) may have positive power."
+    )
+    lines.append(
+        "  • 0 <= power <= max_power_kw for every (session, step)."
+    )
+    if cap_kw is not None:
+        lines.append(
+            f"  • At every time step t, the sum of power across all sessions <= {cap_kw:.2f} kW."
+        )
+    else:
+        lines.append(
+            "  • At every time step t, the sum of power across all sessions <= site cap (varies by t)."
+        )
+    lines.append(
+        f"  • For each session, total energy (sum of power × {dt_hours:.4f} over all steps) must not exceed energy_kwh."
+    )
+    lines.append("")
+
+    # -------------------------------------------------------------------------
+    # 4. Parameters and session table
+    # -------------------------------------------------------------------------
+    lines.append(f"PARAMETERS: {n_steps} time steps; each step = {dt_hours:.4f} h; step 0 = midnight.")
+    if cap_kw is not None:
+        lines.append(f"Site power cap = {cap_kw:.2f} kW at every step.")
+    lines.append("")
+    lines.append(f"SESSIONS ({n_sessions}):")
+    headers = ["idx", "arrival_idx", "departure_idx", "energy_kwh", "max_power_kw"]
+    rows: list[list[object]] = []
+    for i, sess in enumerate(day.sessions):
+        rows.append([
+            i,
+            sess.arrival_idx,
+            sess.departure_idx,
+            f"{sess.energy_kwh:.3f}",
+            f"{sess.max_power_kw:.3f}",
+        ])
     lines.append(_format_table(headers, rows))
     lines.append("")
 
-    # --- 3. Output specification ---
-    lines.append("You must output a charging schedule that satisfies the following:")
-    lines.append(
-        "- The schedule is a matrix of real numbers p[i,t] in kW, "
-        "where i is the session_index from the table above and "
-        "t is the time step index from 0 to n_steps-1."
-    )
-    lines.append(
-        "- For each session i, p[i,t] must be 0 for all t outside the interval "
-        "[arrival_idx_i, departure_idx_i)."
-    )
-    lines.append(
-        "- For each session i and each allowed time step t, "
-        "0 <= p[i,t] <= max_power_kw_i."
-    )
-    lines.append(
-        "- At every time step t, the total site power "
-        "sum over all sessions of p[i,t] must not exceed the site power cap."
-    )
-    lines.append(
-        "- For each session i, the total energy delivered "
-        "sum_t p[i,t] * dt_hours should be as close as possible to energy_kwh_i."
-    )
-    lines.append(
-        "- Schedules that leave most or all sessions with unmet energy "
-        "(for example, p[i,t] = 0 for all i,t) are NOT acceptable solutions."
-    )
-    lines.append("")
-    lines.append("Output format (very important):")
-    lines.append(
-        "- Print one line per session in the same order as the table above."
-    )
-    lines.append(
-        "- Each line must start with the literal text 'Session i:' where i is the session_index,"
-    )
-    lines.append(
-        "  followed by exactly n_steps floating-point numbers separated by spaces."
-    )
-    lines.append(
-        "- The k-th number on that line is the power p[i,k] in kW for time step k."
-    )
-    lines.append("")
-    lines.append("Example (for illustration only, not matching the real data):")
-    lines.append("Session 0: 0.0 7.0 7.0 7.0 0.0 0.0")
-    lines.append("Session 1: 0.0 0.0 3.5 3.5 3.5 0.0")
+    # -------------------------------------------------------------------------
+    # 5. Solution algorithm (clear steps so the model follows one procedure)
+    # -------------------------------------------------------------------------
+    lines.append("ALGORITHM (follow in order):")
     lines.append("")
     lines.append(
-        "Now produce the schedule following the exact output format described above."
+        "Step A — For each session i: Let window = departure_idx - arrival_idx. "
+        f"Needed average power = energy_kwh / (window × {dt_hours:.4f}). "
+        "If that exceeds max_power_kw, the session is infeasible: use max_power_kw in every step of its window. "
+        "Otherwise, assign that average power to every step in [arrival_idx, departure_idx) and 0 elsewhere."
+    )
+    lines.append("")
+    lines.append(
+        "Step B — For each time step t: If the sum of power across sessions at t exceeds the site cap, "
+        "multiply every session's power at t by (cap / sum) so the total equals the cap."
+    )
+    lines.append("")
+    lines.append(
+        "Step C — After Step B some sessions may be short of energy_kwh. For each such session, "
+        "add power in its window (without exceeding max_power_kw or the cap at any t) until delivered = energy_kwh."
+    )
+    lines.append("")
+    lines.append(
+        "Step D — Write your output: exactly one line per session, each line with exactly "
+        f"{n_steps} numbers (power at step 0, step 1, ..., step {n_steps - 1}). "
+        "Use 4 decimal places (e.g. 3.2709). Session 0 first, then Session 1, ..., Session " + str(n_sessions - 1) + "."
+    )
+    lines.append("")
+
+    # -------------------------------------------------------------------------
+    # 6. Minimal example
+    # -------------------------------------------------------------------------
+    lines.append("EXAMPLE (6 steps, 2 sessions, cap 10 kW, dt=0.25 h):")
+    lines.append("  Session 0: [1,4), energy=3 kWh, max=7 kW → need 3/(3×0.25)=4 kW at steps 1,2,3.")
+    lines.append("  Session 1: [2,5), energy=2.5 kWh, max=6 kW → need 2.5/(3×0.25)≈3.33 kW at steps 2,3,4.")
+    lines.append("  Output (exactly 6 values per line):")
+    lines.append("  Session 0: 0.0000 4.0000 4.0000 4.0000 0.0000 0.0000")
+    lines.append("  Session 1: 0.0000 0.0000 3.3333 3.3333 3.3333 0.0000")
+    lines.append("")
+
+    # -------------------------------------------------------------------------
+    # 7. Final reminder
+    # -------------------------------------------------------------------------
+    lines.append("Now produce your schedule. Output only the Session lines, no other text.")
+    lines.append(
+        f"Remember: {n_sessions} lines, each with exactly {n_steps} space-separated numbers."
     )
 
     if instruction:
         lines.append("")
-        lines.append("Additional instruction from the user:")
+        lines.append("ADDITIONAL INSTRUCTION:")
         lines.append(instruction)
 
     return "\n".join(lines)
+
+
+def build_prompt_for_agent(
+    day: DaySessions,
+    site: SiteConfig,
+    tou: TOUConfig,
+    request: str = "Minimize energy cost for this day.",
+) -> str:
+    """Same structure as build_prompt (Phase B) but for the agent: no output format.
+
+    Returns GOAL, CONSTRAINTS, PARAMETERS, SESSIONS table, and ALGORITHM steps A/B/C.
+    Replaces 'Step D' and 'produce your schedule' with an instruction to call the
+    solve_ev_schedule tool and then explain the results. Used by Phase C LLM agent.
+    """
+    n_sessions = len(day.sessions)
+    n_steps = day.n_steps
+    dt_hours = day.dt_hours
+
+    cap_kw = float(site.P_max_kw) if np.isscalar(site.P_max_kw) else None
+    peak_str = _peak_window_str(tou)
+
+    lines: list[str] = []
+
+    # --- Goal and priorities (same as Phase B) ---
+    min_served = max(0, int(round(0.70 * n_sessions)))
+    lines.append("GOAL:")
+    lines.append(
+        f"  1. Fully serve as many sessions as possible (target ≥{min_served} of {n_sessions}). "
+        "A session is fully served when total energy delivered = energy_kwh (sum of power × dt over its window)."
+    )
+    lines.append(
+        "  2. Satisfy all constraints below. A schedule with delivered=0 for a session that could be charged is invalid."
+    )
+    if peak_str:
+        lines.append(
+            f"  3. After maximizing fully served: prefer cheaper time steps (avoid {peak_str} if possible)."
+        )
+    lines.append("")
+
+    # --- Constraints (same as Phase B) ---
+    lines.append("CONSTRAINTS:")
+    lines.append(
+        "  • For session i: power is 0 for t < arrival_idx and t >= departure_idx. "
+        "Only steps in [arrival_idx, departure_idx) may have positive power."
+    )
+    lines.append(
+        "  • 0 <= power <= max_power_kw for every (session, step)."
+    )
+    if cap_kw is not None:
+        lines.append(
+            f"  • At every time step t, the sum of power across all sessions <= {cap_kw:.2f} kW."
+        )
+    else:
+        lines.append(
+            "  • At every time step t, the sum of power across all sessions <= site cap (varies by t)."
+        )
+    lines.append(
+        f"  • For each session, total energy (sum of power × {dt_hours:.4f} over all steps) must not exceed energy_kwh."
+    )
+    lines.append("")
+
+    # --- Parameters and session table (same as Phase B) ---
+    lines.append(f"PARAMETERS: {n_steps} time steps; each step = {dt_hours:.4f} h; step 0 = midnight.")
+    if cap_kw is not None:
+        lines.append(f"Site power cap = {cap_kw:.2f} kW at every step.")
+    lines.append("")
+    lines.append(f"SESSIONS ({n_sessions}):")
+    headers = ["idx", "arrival_idx", "departure_idx", "energy_kwh", "max_power_kw"]
+    rows: list[list[object]] = []
+    for i, sess in enumerate(day.sessions):
+        rows.append([
+            i,
+            sess.arrival_idx,
+            sess.departure_idx,
+            f"{sess.energy_kwh:.3f}",
+            f"{sess.max_power_kw:.3f}",
+        ])
+    lines.append(_format_table(headers, rows))
+    lines.append("")
+
+    # --- Algorithm context (same as Phase B steps A–C; no Step D / output format) ---
+    lines.append("ALGORITHM (the solver you can call follows this logic):")
+    lines.append("")
+    lines.append(
+        "Step A — For each session i: Let window = departure_idx - arrival_idx. "
+        f"Needed average power = energy_kwh / (window × {dt_hours:.4f}). "
+        "If that exceeds max_power_kw, the session is infeasible: use max_power_kw in every step of its window. "
+        "Otherwise, assign that average power to every step in [arrival_idx, departure_idx) and 0 elsewhere."
+    )
+    lines.append("")
+    lines.append(
+        "Step B — For each time step t: If the sum of power across sessions at t exceeds the site cap, "
+        "multiply every session's power at t by (cap / sum) so the total equals the cap."
+    )
+    lines.append("")
+    lines.append(
+        "Step C — After Step B some sessions may be short of energy_kwh. For each such session, "
+        "add power in its window (without exceeding max_power_kw or the cap at any t) until delivered = energy_kwh."
+    )
+    lines.append("")
+
+    # --- Available tool note (descriptive only — system prompt governs when to call) ---
+    lines.append("AVAILABLE TOOL:")
+    lines.append(
+        "solve_ev_schedule — runs the CVXPY convex optimizer on the problem above and returns: "
+        "total_cost_usd, peak_load_kw, total_unmet_kwh, pct_fully_served. "
+        "Supports optional what-if overrides: disabled_chargers (list of charger IDs to take "
+        "offline), site_cap_kw (override the site power cap), extra_sessions (additional EVs "
+        "to inject). Populate these from the user's request when applicable."
+    )
+    lines.append("")
+    lines.append(f"User request: {request}")
+
+    return "\n".join(lines)
+

@@ -17,3 +17,7 @@ matplotlib>=3.7.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Web GUI
+fastapi>=0.110.0
+uvicorn>=0.29.0
