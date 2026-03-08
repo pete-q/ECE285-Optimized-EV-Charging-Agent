@@ -91,6 +91,54 @@
       color: #7f1d1d;
     }
 
+    /* ── Visualization images ── */
+    .viz-images {
+      margin-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .viz-images img {
+      max-width: 100%;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .viz-images .img-label {
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+
+    /* ── Metrics summary ── */
+    .metrics-summary {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #f9fafb;
+      border-radius: 8px;
+      font-size: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px 12px;
+    }
+    .metrics-summary .metric {
+      display: flex;
+      justify-content: space-between;
+    }
+    .metrics-summary .metric-label { color: #6b7280; }
+    .metrics-summary .metric-value { font-weight: 600; color: #111827; }
+
+    /* ── Inference note ── */
+    .inference-note {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #eff6ff;
+      border-left: 3px solid #3b82f6;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #1e40af;
+    }
+
     .label {
       font-size: 11px;
       color: #9ca3af;
@@ -245,7 +293,7 @@
     inputEl.focus();
   }
 
-  function appendMessage(role, content, extraClass = '') {
+  function appendMessage(role, content, extraClass = '', vizData = null, inferenceNotes = []) {
     // Remove welcome banner on first real message
     const welcome = messagesEl.querySelector('.welcome');
     if (welcome) welcome.remove();
@@ -263,6 +311,52 @@
 
     msgDiv.appendChild(label);
     msgDiv.appendChild(bubble);
+
+    // Add inference notes if present
+    if (inferenceNotes && inferenceNotes.length > 0) {
+      const noteDiv = document.createElement('div');
+      noteDiv.className = 'inference-note';
+      noteDiv.innerHTML = '<strong>📝 Inferred values:</strong><br>' + inferenceNotes.join('<br>');
+      msgDiv.appendChild(noteDiv);
+    }
+
+    // Add metrics summary if visualization data present
+    if (vizData && vizData.metrics) {
+      const metricsDiv = document.createElement('div');
+      metricsDiv.className = 'metrics-summary';
+      metricsDiv.innerHTML = `
+        <div class="metric"><span class="metric-label">Cost:</span><span class="metric-value">$${vizData.metrics.total_cost_usd}</span></div>
+        <div class="metric"><span class="metric-label">Peak Load:</span><span class="metric-value">${vizData.metrics.peak_load_kw} kW</span></div>
+        <div class="metric"><span class="metric-label">Sessions:</span><span class="metric-value">${vizData.metrics.n_sessions}</span></div>
+        <div class="metric"><span class="metric-label">Served:</span><span class="metric-value">${vizData.metrics.pct_fully_served}%</span></div>
+      `;
+      msgDiv.appendChild(metricsDiv);
+    }
+
+    // Add visualization images if present
+    if (vizData) {
+      const imagesDiv = document.createElement('div');
+      imagesDiv.className = 'viz-images';
+
+      if (vizData.schedule_image_b64) {
+        imagesDiv.innerHTML += `
+          <div>
+            <div class="img-label">📊 Charging Schedule (sessions × time)</div>
+            <img src="data:image/png;base64,${vizData.schedule_image_b64}" alt="Schedule heatmap" />
+          </div>`;
+      }
+      if (vizData.load_image_b64) {
+        imagesDiv.innerHTML += `
+          <div>
+            <div class="img-label">📈 Aggregate Load Profile</div>
+            <img src="data:image/png;base64,${vizData.load_image_b64}" alt="Load profile" />
+          </div>`;
+      }
+      if (imagesDiv.children.length > 0) {
+        msgDiv.appendChild(imagesDiv);
+      }
+    }
+
     messagesEl.appendChild(msgDiv);
     scrollToBottom();
     return msgDiv;
@@ -307,7 +401,12 @@
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({
+          message: text,
+          history,
+          include_visualization: true,
+          include_images: true,
+        }),
       });
 
       const data = await res.json();
@@ -317,7 +416,9 @@
         appendMessage('agent', '⚠ ' + data.error, 'error');
       } else {
         const extraClass = data.needs_clarification ? 'clarification' : '';
-        const agentMsg = appendMessage('agent', data.response, extraClass);
+        const vizData = data.visualization || null;
+        const inferenceNotes = data.inference_notes || [];
+        const agentMsg = appendMessage('agent', data.response, extraClass, vizData, inferenceNotes);
         history.push({ role: 'assistant', content: data.response });
       }
     } catch (err) {
