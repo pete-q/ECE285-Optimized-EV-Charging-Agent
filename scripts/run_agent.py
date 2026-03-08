@@ -119,27 +119,37 @@ def main() -> None:
     # Branch A: natural-language text input
     # =========================================================================
     if args.text:
-        from agent.run import run_agent, ClarificationResult
+        from agent.run import run_agent_from_text, ClarificationResult
         from agent.parse.parse import parse_nl_problem, parsed_problem_to_day_site_tou
 
         print(f"Parsing problem from text: {args.text!r}")
         print()
 
-        # Single LLM call to extract structured session data.
-        parse_result = parse_nl_problem(args.text)
+        # Run the full pipeline via run_agent_from_text
+        result = run_agent_from_text(args.text)
 
-        if parse_result.needs_clarification:
-            print("The agent needs more information:")
+        if isinstance(result, ClarificationResult):
+            print("The agent needs more information to optimize:")
             print()
-            print(parse_result.clarification_message)
+            print(result.message)
             sys.exit(0)
 
-        day, site, tou = parsed_problem_to_day_site_tou(parse_result.problem)  # type: ignore[arg-type]
-        print(f"Extracted {len(day.sessions)} session(s) from text.")
+        # Re-parse to get day/site/tou for printing (needed for _print_agent_result)
+        parse_result = parse_nl_problem(args.text)
+        if parse_result.problem is None:
+            print("Error: Could not parse problem.")
+            sys.exit(1)
+        day, site, tou = parsed_problem_to_day_site_tou(parse_result.problem)
 
-        # Run the agent with the user's original text as the request so the LLM
-        # can decide whether to call the solver or answer directly.
-        result = run_agent(day, site, tou, request=args.text)
+        # Show inference information if applicable
+        if parse_result.used_inference:
+            print("Note: Context-aware inference was used for missing values:")
+            for note in parse_result.inference_notes:
+                print(f"  - {note}")
+            print()
+
+        print(f"Processing {len(day.sessions)} session(s).")
+
         _print_agent_result(result, day, site, tou, out_dir)
         return
 

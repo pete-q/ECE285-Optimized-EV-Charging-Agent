@@ -17,8 +17,8 @@ schedule is a zero matrix; the explanation still contains the LLM's answer.
 
 For natural-language input (no pre-built DaySessions), use run_agent_from_text().
 It first calls parse_nl_problem() to extract structured session data, then
-runs the normal agent pipeline. If required fields are missing it returns a
-ClarificationResult instead of an AgentResult.
+runs normal agent pipeline. If required fields missing, returns a
+ClarificationResult asking for the missing information and explaining reasoning.
 """
 
 from dataclasses import dataclass
@@ -119,39 +119,54 @@ def run_agent_from_text(
     model: str = "gpt-4o",
     api_key: Optional[str] = None,
     max_retries: int = 1,
+    allow_inference: bool = True,
 ) -> Union[AgentResult, ClarificationResult]:
     """Run the full agent pipeline from a natural-language problem description.
 
-    This is the entry point for free-form user input. It performs two LLM calls:
-      1. parse_nl_problem() — extracts structured session data (arrival, departure,
-         energy, power) from the user's text. Returns a ClarificationResult if
-         required fields are missing.
-      2. run_agent_llm() — the existing agent loop that decides whether to call
-         the CVXPY solver or answer directly.
+    This is the entry point for free-form user input. It performs these steps:
+      1. parse_nl_problem() — extracts structured session data from user's text.
+         If fields are missing AND user indicated unknowns (e.g., "I don't know"),
+         uses context-aware inference. Otherwise returns ClarificationResult.
+      2. run_agent_llm() — the agent loop that calls the CVXPY solver.
 
     Args:
         user_text: Free-form natural-language description of the charging problem.
             Examples:
-              "I have 3 EVs. EV1 arrives at 6pm, leaves at 10pm, needs 20 kWh.
-               EV2 arrives at 7pm, leaves at 11pm, needs 15 kWh.
-               EV3 arrives at 8pm, leaves at midnight, needs 10 kWh."
-              "Minimize cost for two cars: one needs 25 kWh from 5pm to 9pm,
-               one needs 12 kWh from 6pm to 10pm. Site cap is 30 kW."
+              "I have 3 EVs. EV1 arrives at 6pm, leaves at 10pm, needs 20 kWh."
+              "EV1 arrives at 6pm, I don't know when it leaves, needs about 20 kWh."
         model: OpenAI model name (used for both the parse and agent calls).
         api_key: OpenAI API key (falls back to OPENAI_API_KEY env var).
         max_retries: Passed to run_agent() as max_retries.
+        allow_inference: If True, allow context-aware inference when user
+            explicitly indicates some values are unknown.
 
     Returns:
-        AgentResult if the problem was fully specified and the solver ran, or
-        ClarificationResult if required session fields were missing.
+        AgentResult if the problem was fully specified (or inferred) and the
+        solver ran, or ClarificationResult if required fields were missing.
     """
     from agent.parse.parse import parse_nl_problem, parsed_problem_to_day_site_tou
 
-    parse_result = parse_nl_problem(user_text, model=model, api_key=api_key)
+    parse_result = parse_nl_problem(
+        user_text, model=model, api_key=api_key, allow_inference=allow_inference
+    )
 
     if parse_result.needs_clarification:
         return ClarificationResult(message=parse_result.clarification_message)
 
     day, site, tou = parsed_problem_to_day_site_tou(parse_result.problem)  # type: ignore[arg-type]
 
-    return run_agent(day, site, tou, request=user_text, max_retries=max_retries)
+    result = run_agent(day, site, tou, request=user_text, max_retries=max_retries)
+
+    # If inference was used, append notes to explanation for transparency
+    if parse_result.used_inference and parse_result.inference_notes:
+        inference_text = " (Note: I inferred some values based on context: " + "; ".join(parse_result.inference_notes) + ")"
+        result = AgentResult(
+            schedule=result.schedule,
+            total_cost_usd=result.total_cost_usd,
+            peak_load_kw=result.peak_load_kw,
+            unmet_energy_kwh=result.unmet_energy_kwh,
+            feasible=result.feasible,
+            explanation=result.explanation + inference_text,
+        )
+
+    return result

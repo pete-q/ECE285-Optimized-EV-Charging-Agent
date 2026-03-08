@@ -28,10 +28,19 @@ except ImportError:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 app = FastAPI(title="EV Charging Schedule Agent")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 _HTML_PATH = Path(__file__).parent / "index.html"
 
@@ -48,6 +57,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: List[ChatMessage] = []
+    include_visualization: bool = True
+    include_images: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -66,17 +77,29 @@ async def index() -> HTMLResponse:
 async def chat(req: ChatRequest) -> JSONResponse:
     """Run the agent on the user's message and return a response.
 
+    agent parses user's input, extract session
+    parameters, and calls the CVXPY solver to compute an optimal schedule.
+    If required information is missing, agent asks for clarification
+
     Accepts:
         message: The user's latest message.
         history: Prior turns (used for display only; agent is stateless per call).
+        include_visualization: If True, include structured visualization data.
+        include_images: If True, include PNG images.
 
     Returns:
-        { "response": str, "needs_clarification": bool }
+        {
+            "response": str,
+            "needs_clarification": bool,
+            "missing_fields": [...] (if needs_clarification=True),
+            "visualization": {...} (if include_visualization=True and schedule was computed)
+        }
         or on error:
         { "error": str }
     """
     try:
-        from agent.run import run_agent_from_text, ClarificationResult
+        from agent.run import run_agent_from_text, ClarificationResult, AgentResult
+        from agent.parse.parse import parse_nl_problem, parsed_problem_to_day_site_tou
     except ImportError as exc:
         return JSONResponse(
             status_code=500,
@@ -99,15 +122,62 @@ async def chat(req: ChatRequest) -> JSONResponse:
         )
 
     if isinstance(result, ClarificationResult):
+        # Parse again to get the missing_fields list for the UI
+        try:
+            parse_result = parse_nl_problem(req.message, api_key=api_key)
+            missing = parse_result.missing_fields
+        except Exception:
+            missing = []
+
         return JSONResponse(content={
             "response": result.message,
             "needs_clarification": True,
+            "missing_fields": missing,
         })
 
-    return JSONResponse(content={
+    # Check if inference was used
+    used_inference = False
+    inference_notes: List[str] = []
+    try:
+        parse_result = parse_nl_problem(req.message, api_key=api_key)
+        used_inference = parse_result.used_inference
+        inference_notes = parse_result.inference_notes
+    except Exception:
+        pass
+
+    response_content: Dict[str, Any] = {
         "response": result.explanation,
         "needs_clarification": False,
-    })
+        "used_inference": used_inference,
+        "inference_notes": inference_notes,
+    }
+
+    if req.include_visualization:
+        try:
+            from visualization.output import build_visualization_data
+            from evaluation.metrics import pct_fully_served as calc_pct_served
+
+            parse_result = parse_nl_problem(req.message, api_key=api_key)
+            if parse_result.problem is not None:
+                day, site, tou = parsed_problem_to_day_site_tou(parse_result.problem)
+                pct_served = calc_pct_served(result.schedule, day, day.dt_hours)
+
+                viz_data = build_visualization_data(
+                    schedule=result.schedule,
+                    day=day,
+                    total_cost_usd=result.total_cost_usd,
+                    peak_load_kw=result.peak_load_kw,
+                    unmet_energy_kwh=result.unmet_energy_kwh,
+                    pct_fully_served=pct_served,
+                    explanation=result.explanation,
+                    feasible=result.feasible,
+                    include_images=req.include_images,
+                )
+                response_content["visualization"] = viz_data.to_dict()
+        except Exception:
+            pass
+
+    return JSONResponse(content=response_content)
 
 
 @app.get("/api/health")
