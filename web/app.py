@@ -62,6 +62,24 @@ class ChatRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_FOLLOWUP_INDICATORS = [
+    "same scenario", "same evs", "same setup", "same situation",
+    "those evs", "the evs", "these evs", "previous", "again",
+    "what if", "but with", "instead", "also", "now", "try",
+    "modify", "change", "adjust", "update", "redo",
+]
+
+
+def _is_followup_question(message: str) -> bool:
+    """Check if the message is a follow-up referencing previous context."""
+    msg_lower = message.lower()
+    return any(indicator in msg_lower for indicator in _FOLLOWUP_INDICATORS)
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -113,8 +131,21 @@ async def chat(req: ChatRequest) -> JSONResponse:
             content={"error": "OPENAI_API_KEY is not set. Add it to .env or set it in your environment."},
         )
 
+    # Build context from conversation history for follow-up questions
+    # Include recent user messages so agent can understand references like "same scenario"
+    context_parts = []
+    for msg in req.history[-6:]:  # Last 3 exchanges (6 messages)
+        if msg.role == "user":
+            context_parts.append(f"User previously said: {msg.content}")
+    
+    # Combine history context with current message
+    if context_parts and _is_followup_question(req.message):
+        full_message = "\n".join(context_parts) + f"\n\nCurrent request: {req.message}"
+    else:
+        full_message = req.message
+
     try:
-        result = run_agent_from_text(req.message, api_key=api_key)
+        result = run_agent_from_text(full_message, api_key=api_key)
     except Exception as exc:
         import traceback
         traceback.print_exc()
