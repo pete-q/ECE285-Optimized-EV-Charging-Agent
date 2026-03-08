@@ -116,6 +116,8 @@ async def chat(req: ChatRequest) -> JSONResponse:
     try:
         result = run_agent_from_text(req.message, api_key=api_key)
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"error": f"Agent error: {exc}"},

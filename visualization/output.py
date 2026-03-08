@@ -172,30 +172,55 @@ def build_visualization_data(
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
 
-            fig_schedule, ax_schedule = plt.subplots(figsize=(10, max(3, n_sessions * 0.3)))
-            if schedule_2d.size > 0:
+            # Session labels for y-axis
+            session_labels = [s.session_id for s in day.sessions]
+
+            # Time labels for x-axis (every 2 hours = 8 steps at 15-min resolution)
+            steps_per_hour = int(1 / dt_hours)
+            hour_ticks = list(range(0, n_steps, steps_per_hour * 2))
+            hour_labels = [f"{int(t * dt_hours)}:00" for t in hour_ticks]
+
+            # Schedule heatmap
+            fig_schedule, ax_schedule = plt.subplots(figsize=(12, max(3, n_sessions * 0.5 + 1)))
+            if schedule_2d.size > 0 and n_sessions > 0:
                 im = ax_schedule.imshow(
                     schedule_2d,
                     aspect="auto",
                     interpolation="nearest",
-                    cmap="viridis",
+                    cmap="YlOrRd",
                 )
                 cbar = fig_schedule.colorbar(im, ax=ax_schedule)
                 cbar.set_label("Power (kW)")
-            ax_schedule.set_xlabel("Time Step")
+
+                # Set proper y-axis labels (session IDs)
+                ax_schedule.set_yticks(range(n_sessions))
+                ax_schedule.set_yticklabels(session_labels)
+
+                # Set x-axis to show time of day
+                ax_schedule.set_xticks(hour_ticks)
+                ax_schedule.set_xticklabels(hour_labels)
+
+            ax_schedule.set_xlabel("Time of Day")
             ax_schedule.set_ylabel("Session")
-            ax_schedule.set_title("Charging Schedule")
+            ax_schedule.set_title("Charging Schedule (Power Allocation)")
+            fig_schedule.tight_layout()
             schedule_image_b64 = _figure_to_base64(fig_schedule)
             plt.close(fig_schedule)
 
-            fig_load, ax_load = plt.subplots(figsize=(10, 4))
-            ax_load.fill_between(range(n_steps), load_profile, alpha=0.4)
-            ax_load.plot(range(n_steps), load_profile, linewidth=2)
-            ax_load.set_xlabel("Time Step")
+            # Load profile chart
+            fig_load, ax_load = plt.subplots(figsize=(12, 4))
+            time_hours = [t * dt_hours for t in range(n_steps)]
+            ax_load.fill_between(time_hours, load_profile, alpha=0.4, color='steelblue')
+            ax_load.plot(time_hours, load_profile, linewidth=2, color='steelblue')
+            ax_load.set_xlabel("Time of Day (hours)")
             ax_load.set_ylabel("Total Load (kW)")
-            ax_load.set_title("Aggregate Load Profile")
-            ax_load.set_xlim(0, n_steps - 1)
+            ax_load.set_title("Aggregate Facility Load Profile")
+            ax_load.set_xlim(0, 24)
             ax_load.set_ylim(bottom=0)
+            ax_load.set_xticks(range(0, 25, 2))
+            ax_load.set_xticklabels([f"{h}:00" for h in range(0, 25, 2)])
+            ax_load.grid(True, alpha=0.3)
+            fig_load.tight_layout()
             load_image_b64 = _figure_to_base64(fig_load)
             plt.close(fig_load)
 
