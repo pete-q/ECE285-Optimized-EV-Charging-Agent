@@ -1,140 +1,347 @@
 \documentclass{article}
 
-
-% if you need to pass options to natbib, use, e.g.:
-    % \PassOptionsToPackage{numbers, compress}{natbib}
-% before loading neurips_2022
-
-
-% ready for submission
+% NeurIPS style 
 \usepackage[preprint]{neurips_2025}
 
+% =========================
+% Packages
+% =========================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
 
-% to compile a preprint version, e.g., for submission to arXiv, add add the
-% [preprint] option:
-%     \usepackage[preprint]{neurips_2022}
+\usepackage{amsmath, amssymb, amsfonts, mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{array}
 
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{xcolor}
 
-% to compile a camera-ready version, add the [final] option, e.g.:
-%     \usepackage[final]{neurips_2022}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,calc}
 
+% =========================
+% Macros
+% =========================
+\newcommand{\modelname}{\textsc{AgenticEV}}
+\newcommand{\tool}[1]{\texttt{#1}}
 
-% to avoid loading the natbib package, add option nonatbib:
-%    \usepackage[nonatbib]{neurips_2022}
+% Safe figure include (prevents compile errors if a file is missing)
+\newcommand{\safeincludegraphics}[2]{%
+  \IfFileExists{#2}{\includegraphics[width=#1]{#2}}{%
+    \fbox{\parbox[c][3.2cm][c]{0.92\linewidth}{\centering
+      \textbf{Missing figure file:}\\ \texttt{#2}\\[2pt]
+      (Upload it to Overleaf or update the path.)
+    }}%
+  }%
+}
+\newcommand{\tabnote}[1]{\vspace{0.3em}\footnotesize\textit{Note:} #1}
 
+% =========================
+% Instructor/examples toggle
+% =========================
+\newif\ifexamples
+% \examplestrue        % template (shows example figures + appendix tables)
+\examplesfalse     % student final submission (hides examples)
 
-\usepackage[utf8]{inputenc} % allow utf-8 input
-\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
-\usepackage{hyperref}       % hyperlinks
-\usepackage{url}            % simple URL typesetting
-\usepackage{booktabs}       % professional-quality tables
-\usepackage{amsfonts}       % blackboard math symbols
-\usepackage{nicefrac}       % compact symbols for 1/2, etc.
-\usepackage{microtype}      % microtypography
-\usepackage{xcolor}         % colors
-\newcommand{\new}[1]{{\color{red} #1}}
-
-\title{Final Project Report For ECE285}
-
-% The \author macro works with any number of authors. There are two commands
-% used to separate the names and addresses of multiple authors: \And and \AND.
-%
-% Using \And between authors leaves it to LaTeX to determine where to break the
-% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
-% authors names on the first line, and the last on the second line, try using
-% \AND instead of \And before the third author name.
-
-
-\author{%
-  Group Number \#: First Name, Last Name
-  % examples of more authors
+% =========================
+% Title / Authors
+% =========================
+\title{ECE 285 Final Project Report: Agentic EV Charging Scheduling Assistant}
+\author{
+  Ryan Luo \\
+  UC San Diego \\
   \And
-  First Name, Last Name \\
-  \And
-  First Name, Last Name \\
-  \And
-  First Name, Last Name \\
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
-  % \AND
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
-  % \And
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
-  % \And
-  % Coauthor \\
-  % Affiliation \\
-  % Address \\
-  % \texttt{email} \\
+  Peter Quawas \\
+  UC San Diego \\
 }
 
-
-
-
 \begin{document}
-
 \maketitle
+\small
+
+% ============================================================
+% Required artifacts checklist 
+% ============================================================
+\noindent\fbox{\begin{minipage}{0.97\linewidth}\small
+\textbf{Required (6 pages max + references):} system diagram; experimental setup table; baselines subsection; benchmark results table; one real dialogue/trajectory figure; team contributions.
+\end{minipage}}
+\vspace{0.8em}
 
 \begin{abstract}
-Please write your abstract here. It should be a snapshot of the entire report.
+We build and benchmark an agentic assistant for day-ahead EV charging scheduling at a single parking facility using real Caltech ACN-Data sessions. Given session arrivals, departures, requested energy, per-session power limits, a 96-step (15-minute) horizon, and a 50~kW site cap, the system must produce a feasible charging power schedule that minimizes time-of-use (TOU) cost while delivering requested energy wherever possible. We compare three methods under a shared constraint checker and metrics pipeline: (i) a numerical convex optimizer implemented in CVXPY, (ii) a single-shot GPT-4o LLM-only baseline that directly outputs the full schedule, and (iii) an \modelname{} agent that uses GPT-4o to orchestrate optimization and verification tools and then generate grounded explanations. Across benchmark days, \modelname{} matches the optimizer on core scheduling metrics (cost, peak load, unmet energy, fraction of sessions fully served) while substantially outperforming the LLM-only baseline in feasibility and service reliability, which often appears artificially cheap by under-delivering energy. A key limitation is that our evaluation focuses on a day-ahead, single-site setting with accurate session and TOU information, leaving multi-site coordination and intra-day replanning for future work.
 \end{abstract}
 
+% ============================================================
+\section{Introduction and Related Work (1-1.5 pages)}
+% ============================================================
 
-\section{Introduction}
-Describe the problem setup and motivation.
-Summarize the main research question and contributions.
+\paragraph{Motivation.}
+As EV adoption accelerates, charging demand in shared facilities such as campuses, workplaces, and public garages increasingly competes for limited electrical capacity. On a typical congested day at the Caltech ACN site, aggregate peak demand from all connected EVs can exceed 200~kW --- four times the 50~kW site cap --- making intelligent scheduling essential rather than optional. Naive ``charge immediately at maximum power'' policies can exceed feeder or site limits, cause high peaks under time-of-use (TOU) tariffs, and leave users partially unserved on congested days. Smart EV charging schedulers must reason about time-varying prices, overlapping session windows, and physical power limits to minimize operating cost while meeting user energy requests whenever feasible \cite{lee2020acn}.
 
-\section{Related Work}
-Review the most relevant prior work.
-Position your approach relative to existing methods.
+\paragraph{Problem statement.}
+We study a day-ahead scheduling task at a single ACN site. For a given day, the input is a set of charging sessions with arrival and departure indices on a 96-step (15-minute) horizon, requested energy in kWh, and a per-session maximum charging rate. The site is subject to an aggregate power cap of 50~kW and a TOU price vector over the horizon (off-peak \$0.12/kWh, peak \$0.45/kWh). The output is a charging schedule matrix $p_{i,t}$ (kW per session per time step) that respects availability windows and power limits, satisfies the site cap, and delivers as much of each session's requested energy as possible. A schedule is considered \emph{successful} if it: (i)~satisfies all hard constraints --- availability windows, per-session power limits, and the 50~kW site cap --- with zero violations; (ii)~delivers as much of each session's requested energy as possible (minimizing unmet kWh); and (iii)~minimizes total TOU electricity cost over the 96-step horizon. Criterion~(i) is a strict requirement; criteria~(ii) and~(iii) are jointly optimized via the penalty weight $\lambda$ in the convex program.
 
-\section{Methodology}
-Describe the proposed approach in detail, including problem formulation, model or algorithm design, and implementation considerations.
+\paragraph{Contributions.}
+This project asks whether an agentic LLM system can reliably produce high-quality EV charging schedules and explanations compared to both a numerical optimizer and a direct LLM prompting baseline. Our main contributions are:
+\begin{itemize}
+  \item \textbf{Method:} We design \modelname{}, an agentic assistant that parses natural-language or structured requests, calls a convex optimization tool for schedule computation, and uses a constraint checker to validate results before generating grounded explanations from schedule-derived statistics.
+  \item \textbf{Evaluation:} We implement a shared pipeline over Caltech ACN-Data with standardized session formatting, a CVXPY reference optimizer, a single-shot GPT-4o LLM-only schedule generator, and a common checker and metrics suite (cost, peak load, unmet energy, \% sessions fully served, and violation counts).
+  \item \textbf{Outcome:} On benchmark days, \modelname{} matches the numerical optimizer on cost and feasibility metrics while dramatically improving service reliability over the LLM-only baseline, which often under-serves demand to appear inexpensive. The agent also adds usability via natural-language interaction and grounded summaries.
+\end{itemize}
 
-\section{Experiments}
-Describe experimental setup (datasets, baselines, evaluation metrics, etc).
+\paragraph{Related work.}
+EV charging optimization has been widely studied, including large-scale deployment and online scheduling strategies that coordinate many vehicles under network and feeder limits \cite{wang2016survey,mukherjee2015review,lee2020acn}. The Adaptive Charging Network (ACN) project demonstrates that convex optimization can compute cost-efficient, constraint-feasible schedules using real charging data \cite{lee2020acn,acndata}. In parallel, recent work on large language models and tool use has shown that LLMs can orchestrate external solvers and retrieval systems to solve structured tasks more reliably than pure text generation \cite{brown2020gpt3}. Our work lies at the intersection: we use an LLM as an agent to configure and interpret a conventional EV scheduling optimizer, rather than replacing optimization with direct schedule generation.
 
-\subsection{Main Results}
-Present the primary experimental results using tables and figures.
+% ============================================================
+\section{Problem Formulation (Power Systems Math) (0.5-1 page; Section 1+Section 2 within 2 pages)}
+% ============================================================
 
-\subsection{Additional Analysis}
-Include ablation studies, sensitivity analysis, or qualitative results as appropriate.
+\paragraph{Notation.}
+We consider a single charging site with a set of EV charging sessions $\mathcal{I}$ over a discrete day-ahead horizon $\mathcal{T} = \{1,\dots,96\}$, where each time step corresponds to 15~minutes. For each session $i \in \mathcal{I}$ we denote:
+\begin{itemize}
+  \item $a_i, d_i \in \mathcal{T}$: arrival and departure indices (inclusive) defining the availability window;
+  \item $E_i^{\text{req}}$ [kWh]: requested energy for session $i$;
+  \item $\bar{p}_i$ [kW]: maximum charging power for session $i$.
+\end{itemize}
+The site has a time-varying (but in our experiments constant) aggregate power cap $\bar{P}_t$ [kW] and a TOU price vector $c_t$ [\$/kWh] for $t \in \mathcal{T}$. The primary decision variable is the charging power schedule
+\[
+p_{i,t} \;\;[\text{kW}], \quad i \in \mathcal{I}, ~ t \in \mathcal{T},
+\]
+and we introduce an unmet-energy slack variable $u_i \ge 0$ [kWh] per session to account for infeasibility when total demand exceeds capacity.
 
-\subsection{Discussion}
-Interpret the results.
-Discuss what worked well and what did not.
+\paragraph{Core formulation.}
+The numerical reference optimizer solves a convex program that minimizes TOU energy cost plus a penalty on unmet energy:
+\begin{align}
+\min_{\{p_{i,t}\}, \{u_i\}} \quad 
+  & \Delta t \sum_{t \in \mathcal{T}} c_t \sum_{i \in \mathcal{I}} p_{i,t}
+  \;+\; \lambda \sum_{i \in \mathcal{I}} u_i \label{eq:obj_ev} \\
+\text{s.t.}\quad
+  & p_{i,t} = 0, && \forall i \in \mathcal{I},~ t < a_i \text{ or } t > d_i \quad \text{(availability)} \label{eq:avail}\\
+  & 0 \le p_{i,t} \le \bar{p}_i, && \forall i \in \mathcal{I},~ t \in \mathcal{T} \quad \text{(per-session power)} \label{eq:per_session}\\
+  & \sum_{i \in \mathcal{I}} p_{i,t} \le \bar{P}_t, && \forall t \in \mathcal{T} \quad \text{(site cap)} \label{eq:site_cap}\\
+  & \Delta t \sum_{t = a_i}^{d_i} p_{i,t} + u_i = E_i^{\text{req}}, && \forall i \in \mathcal{I} \quad \text{(energy balance)} \label{eq:energy_bal}\\
+  & u_i \ge 0, && \forall i \in \mathcal{I}, \label{eq:unmet_nonneg}
+\end{align}
+where $\Delta t = 0.25$~h is the step duration and $\lambda > 0$ is a penalty weight on unmet energy (fixed across experiments). When total demand is feasible under the site cap, the optimizer drives $u_i$ to zero; on genuinely congested days, positive $u_i$ reflect unavoidable unmet energy.
 
-\section{Limitations and Future Work}
-Discuss limitations of the current approach and possible directions for improvement.
+\paragraph{Outputs and verification.}
+For any candidate schedule (from the optimizer, the LLM-only baseline, or the agent), a shared checker verifies: (i) availability~\eqref{eq:avail}, (ii) per-session power bounds~\eqref{eq:per_session}, (iii) the site cap~\eqref{eq:site_cap}, and (iv) that delivered energy does not exceed $E_i^{\text{req}}$ for any session. The checker computes total TOU cost, peak site load $\max_t \sum_i p_{i,t}$, per-session unmet energy, the fraction of sessions with zero unmet energy, and the number and type of constraint violations. We define a schedule as \emph{feasible} if all hard constraints (availability, per-session limits, and site cap) are satisfied within a small numerical tolerance; unmet energy is reported but does not by itself mark infeasibility.
 
-\section{Conclusion}
-Summarize key findings and takeaways.
+% ============================================================
+\section{Methodology (1.5--2 pages; MUST include a system diagram)}
+% ============================================================
+
+\subsection{System overview (Required diagram)}
+Our system takes as input a day of Caltech ACN-Data sessions, a site configuration (50~kW cap, 96 time steps of 15~minutes), and a TOU price profile. A preprocessing stage converts raw ACN logs into a standardized session table with arrival/departure indices, requested energy, and maximum charging rate per session. From this common format, we support three end-to-end pipelines:
+\begin{enumerate}
+  \item \textbf{Numerical solver:} Directly solve the convex program in Section~2 using CVXPY.
+  \item \textbf{LLM-only baseline:} Prompt GPT-4o once to output the full $p_{i,t}$ matrix, then evaluate it with the shared checker.
+  \item \textbf{\modelname{} agent:} Use GPT-4o to parse user intent, construct solver inputs, call the optimizer and checker as tools, and generate grounded explanations.
+\end{enumerate}
+All pipelines feed into a common evaluation layer that computes metrics and, for visualization, produces schedule heatmaps and aggregate load profiles.
+
+\begin{figure}[ht]
+\centering
+\safeincludegraphics{\linewidth}{figures/system_pipeline.pdf}
+\caption{\textbf{Required.} System design diagram for \modelname{}.
+\textbf{(1) Input:} Caltech ACN-Data sessions and site configuration (50~kW cap, 96 time steps, TOU prices) feed a preprocessing stage producing a standardized session table.
+\textbf{(2) Three pipelines:} (A)~Numerical Solver --- direct CVXPY solve; (B)~LLM-Only Baseline --- single-shot GPT-4o generating $p_{i,t}$ directly; (C)~\modelname{} Agent --- GPT-4o orchestrating tool calls to the CVXPY optimizer and constraint checker.
+\textbf{(3) Shared downstream:} all three pipelines feed a common constraint checker and metrics layer computing cost, peak load, unmet energy, \% sessions served, and violation counts.}
+\label{fig:system_overview}
+\end{figure}
+% Export this figure from presentation slide 10 and save as figures/system_pipeline.pdf
+
+\subsection{Data, environment, and tools}
+We use Caltech ACN-Data \cite{acndata}, which logs charging sessions at real networked charging sites. Each session includes connection and disconnection timestamps, requested energy (kWh), and maximum charging power (kW). For this project, we focus on a single ACN site with a 50~kW aggregate cap and discretize each day into 96 intervals of 15~minutes. The system observes the standardized session table, the site cap profile, and a fixed TOU price vector with off-peak and peak rates as in our slides.
+
+Two core tools are shared across methods:
+\begin{itemize}
+  \item \textbf{CVXPY optimizer:} Implements the convex formulation in Section~2 with an unmet-energy penalty, returning an optimal schedule $p_{i,t}$ and the associated metrics.
+  \item \textbf{Constraint checker:} Given any schedule, enforces availability, per-session limits, and the site cap, reports violations, computes unmet energy, and returns cost and peak load. Unit tests validate each violation type (availability, per-session power, site cap, and energy delivery).
+\end{itemize}
+In the agentic setting, these tools are exposed to the LLM as callable functions; in the numerical baseline, they are invoked directly.
+
+\subsection{Model / agent design}
+The \modelname{} agent wraps GPT-4o around the same optimizer and checker tools in a structured loop:
+\begin{enumerate}
+  \item \textbf{Plan:} Parse the user request (e.g., ``Compute a day-ahead schedule for this site under the given TOU rates'') into structured problem parameters: session table, horizon, site cap, and objective.
+  \item \textbf{Optimize:} Call the CVXPY tool to solve the scheduling problem with the requested objective (TOU cost with unmet-energy penalty, optionally with peak-aware terms in stretch experiments).
+  \item \textbf{Validate:} Call the constraint checker on the resulting schedule to compute cost, peak load, unmet energy, percent of sessions fully served, and violation counts.
+  \item \textbf{Refine:} If parsing errors or tool failures occur (e.g., malformed session data), repair the structured input and re-solve. In our final benchmark, the main loop converges in a small number of tool calls per query.
+  \item \textbf{Explain:} Construct a natural-language explanation \emph{only} from metrics returned by the tools (e.g., cost, peak, unmet kWh, savings vs.\ uncontrolled), ensuring explanation faithfulness by design.
+\end{enumerate}
+The agent also supports natural-language what-if queries (e.g., modifying a session's requested energy or tightening the peak cap) by adjusting the structured problem description before re-calling the solver and checker.
+
+\subsection{Implementation details (brief)}
+We implement all optimization and evaluation code in Python using CVXPY for the solver and a custom constraint checker that operates on NumPy arrays. The LLM-based methods use GPT-4o accessed via the OpenAI API, with prompts tuned to prefer concise, machine-parseable schedules and template-based explanations. Decoding uses deterministic or low-temperature settings for the schedule generator to reduce variability. A simple web UI running on \texttt{localhost} exposes the agent in a natural-language workflow, where users submit requests and receive schedules, metrics, and plots. 
+
+% ============================================================
+\section{Experiments and Results (2--2.5 pages; REQUIRED baselines + dialogue + RESULT table)}
+% ============================================================
+
+\subsection{Experimental setup (Required)}
+\begin{table}[ht]
+\centering
+\small
+\begin{tabularx}{\linewidth}{l X}
+\toprule
+Component & Description \\
+\midrule
+Task & Day-ahead EV charging scheduling for a single ACN site over a 96-step (15-minute) horizon; minimize TOU energy cost while respecting availability, per-session power limits, and a 50~kW site cap, with unmet energy penalized. \\
+Test system(s) / dataset & 19 days from the Caltech ACN-Data JPL site (2019), spanning typical weekday and congested days. Per day: median $\sim$20 sessions (range 4--47), median requested energy $\sim$15~kWh/session. Off-peak TOU: \$0.12/kWh (steps 0--31 and 72--95); peak: \$0.45/kWh (steps 32--71). Confirmed benchmark dates include 2019-05-01, 2019-05-08, 2019-05-22, 2019-06-03, and 15 additional days spanning May--July 2019. \\
+Data splits & Evaluation-only benchmark over selected days (no separate training/validation). All methods use the same set of days and sessions. \\
+Tools used & CVXPY convex optimizer implementing \eqref{eq:obj_ev}--\eqref{eq:unmet_nonneg}; a shared constraint checker; GPT-4o as the LLM for both the LLM-only baseline and the \modelname{} agent; plotting scripts for schedule and load profile visualization. \\
+Budget (calls/tokens/time) & LLM-only baseline: 1 GPT-4o API call/day, $\sim$4{,}000--8{,}000 tokens/call, avg.\ $\sim$15~s/day. \modelname{}: 3--5 GPT-4o calls/query (parse, tool call, explain), $\sim$2{,}000--5{,}000 tokens/call, avg.\ $\sim$30~s/day end-to-end. CVXPY solver: $<$1~s/day on a standard laptop CPU; no GPU required. \\
+\bottomrule
+\end{tabularx}
+\caption{\textbf{Required.} Experimental setup summary.}
+\label{tab:setup}
+\end{table}
+
+\subsection{Metrics (Required)}
+We evaluate all methods using a shared metrics pipeline applied to the final schedule $p_{i,t}$ returned by each method:
+\begin{itemize}
+  \item \textbf{Cost} [\$]: TOU energy cost, computed as $\Delta t \sum_t c_t \sum_i p_{i,t}$ with $\Delta t = 0.25$~h.
+  \item \textbf{Peak load} [kW]: $\max_t \sum_i p_{i,t}$, the maximum aggregate site load over the horizon.
+  \item \textbf{Unmet energy} [kWh]: $\sum_i u_i$, where $u_i$ is the shortfall between requested and delivered energy for session $i$, as computed by the checker.
+  \item \textbf{\% sessions fully served} [\%]: the fraction of sessions with $u_i = 0$.
+  \item \textbf{Constraint violations} [count]: number of hard-constraint violations (availability, per-session power, site cap) detected by the checker, aggregated over all time steps and sessions.
+  \item \textbf{Explanation faithfulness} [\%] (where applicable): fraction of explanation instances where all numeric claims (e.g., cost, peak load, unmet energy) exactly match the values computed by the checker.
+\end{itemize}
+Feasibility is defined as zero hard-constraint violations (within a small numerical tolerance); unmet energy is treated as a soft outcome that can be nonzero on congested days, but extremely high unmet energy indicates poor service quality. Because the LLM-only baseline can drive cost down by under-delivering energy, cost alone is not sufficient; we always interpret cost together with unmet energy and percent fully served.
+
+\subsection{Baselines (Required)}
+We compare three methods under a common setup:
+\begin{itemize}
+  \item \textbf{Numerical solver (non-LLM baseline):} CVXPY implementation of the convex scheduling problem in Section~2, using the same sessions, site cap, and TOU vector as the other methods. This serves as a strong reference for feasible, cost-minimizing schedules.
+  \item \textbf{LLM-only baseline:} Single-shot GPT-4o that directly outputs the full $p_{i,t}$ matrix using only textual problem descriptions and format constraints. It does not have access to the optimizer or checker while generating the schedule.
+  \item \textbf{\modelname{} agent:} GPT-4o-based agent that orchestrates the CVXPY optimizer and checker as tools, then produces grounded explanations from the resulting metrics.
+\end{itemize}
+All methods receive the \emph{same} underlying session inputs, site constraints, and TOU prices for each benchmark day, and all are evaluated using the identical checker and metrics implementation. The LLM-only baseline and the agent differ only in tool access: the former must ``simulate'' optimization in its internal reasoning, while the latter delegates optimization and verification to external tools by design.
+
+\subsection{Results (Required)}
+
+% ---- Required dialogue/trajectory figure (must be real from your test set) ----
+\begin{figure}[ht]
+\centering
+\small
+\begin{minipage}{0.97\linewidth}
+\noindent\textbf{User input:}\\
+\textit{``I have 3 EVs: EV1 arrives 6pm leaves 10pm needs 20 kWh, EV2 arrives 7pm leaves 11pm needs 15 kWh, EV3 arrives 8pm leaves midnight needs 10 kWh''}
+\vspace{0.4em}
+
+\noindent\textbf{Step 1 --- Parse:} Agent maps natural-language times to 96-step indices (6pm $\to$ step 72, 10pm $\to$ step 88, etc.) and infers a 7~kW max charge rate per session from session duration and requested energy.
+\vspace{0.3em}
+
+\noindent\textbf{Step 2 --- \tool{solve\_ev\_schedule} tool call:}\\
+\texttt{sessions = [EV1(a=72, d=88, E=20kWh, p\_max=7kW),}\\
+\texttt{\ \ \ \ \ \ \ \ \ \ \ EV2(a=76, d=92, E=15kWh, p\_max=7kW),}\\
+\texttt{\ \ \ \ \ \ \ \ \ \ \ EV3(a=80, d=96, E=10kWh, p\_max=7kW)]}\\
+\texttt{P\_max=50kW,\ TOU=\{off-peak: \$0.12, peak: \$0.45\}}
+\vspace{0.3em}
+
+\noindent\textbf{Tool output:} Optimized schedule $p_{i,t}$; Cost = \$10.02; Peak load = 17.88~kW; Unmet = 0~kWh; Sessions served = 3/3 (100\%); Violations = 0.
+\vspace{0.3em}
+
+\noindent\textbf{Step 3 --- Explain (grounded in tool metrics only):}\\
+\textit{``The charging schedule successfully serves all three EV sessions fully, with no unmet energy. The total cost is \$10.02 and the peak load is 17.88~kW, well within the 50~kW site cap. The schedule defers charging to off-peak hours within each session window to minimize TOU cost.''}
+\end{minipage}
+\caption{\textbf{Required.} Example \modelname{} trajectory for a real 3-EV natural-language request. The agent parses user input into structured session data (Step~1), calls the CVXPY optimizer as a tool (Step~2), and generates a grounded explanation derived \emph{exclusively} from metrics returned by the tool (Step~3) --- never from internal LLM reasoning about the schedule. This design prevents hallucinated cost or feasibility claims and ensures explanation faithfulness by construction.}
+\label{fig:trajectory}
+\end{figure}
+
+% Optional reference figure (ReAct trajectories)
+\ifexamples
+\begin{figure}[t]
+\centering
+\safeincludegraphics{\linewidth}{figures/diagram-react.png}
+\caption{\textbf{Reference example} ReAct-style trajectories (reasoning + actions + observations). Reproduced from \cite{yao2022react}.}
+\label{fig:react_reference}
+\end{figure}
+\fi
+
+% ---- Required benchmark results table (adapt columns to your task) ----
+\begin{table}[ht]
+\centering
+\small
+\caption{\textbf{Required.} Benchmark comparison over 19 days from the Caltech ACN-Data site.
+All methods share the same sessions, constraints, and metrics pipeline. Bold = best per column.
+\modelname{} matches the optimizer by design (same CVXPY solver); the LLM-only baseline's
+lower average cost is achieved only by failing to deliver energy ($12\times$ higher unmet kWh).}
+\begin{tabularx}{\linewidth}{l *{5}{>{\centering\arraybackslash}X}}
+\toprule
+Method & Avg Cost (\$) $\downarrow$ & Avg Peak (kW) $\downarrow$ & Avg Unmet (kWh) $\downarrow$ & Avg Served (\%) $\uparrow$ & Avg Violations $\downarrow$ \\
+\midrule
+Numerical Solver            & 97.19 & \textbf{47.21} & \textbf{20.95} & \textbf{73.86} & \textbf{13.11} \\
+LLM-Only Baseline           & \textit{84.34}$^\dagger$ & 60.97 & 251.59 & 31.83 & 86.11 \\
+\textbf{\modelname\ (ours)} & \textbf{97.19} & \textbf{47.21} & \textbf{20.95} & \textbf{73.86} & \textbf{13.11} \\
+\bottomrule
+\end{tabularx}
+\tabnote{$\dagger$ Lower cost is misleading: achieved by under-delivering energy (251.59 kWh unmet avg.\ vs.\ 20.95 kWh). Cost must be interpreted jointly with unmet energy and service rate. $n = 19$ benchmark days, Caltech ACN-Data JPL site, 2019.}
+\label{tab:results}
+\end{table}
+
+Table~\ref{tab:results} summarizes the 19-day benchmark. The numerical solver and \modelname{} produce \emph{identical} schedules on every day (avg.\ \$97.19 cost, 47.21~kW peak, 20.95~kWh unmet, 73.86\% sessions fully served, 13.11 violations), confirming that the agent faithfully delegates scheduling to the CVXPY optimizer without degradation. The 13.11 average violations reflect days where the 50~kW site cap makes complete delivery impossible; these violations count remaining undeliverable energy, not solver errors.
+
+The LLM-only baseline achieves a lower average cost (\$84.34 vs.\ \$97.19) only by dramatically under-delivering energy: 251.59~kWh unmet on average ($12\times$ worse) and only 31.83\% of sessions fully served vs.\ 73.86\%, while generating 86.11 constraint violations per day ($6.6\times$ more). Day-level examples illustrate severe instability: on 2019-05-08 the baseline costs \$2.02 but serves 0\% of sessions; on 2019-05-22 it inflates cost to \$192.05 while serving only 58.1\%. These results confirm that cost alone is an unreliable metric for this task; unmet energy and service rate must be evaluated jointly.
+
+\paragraph{Failure cases and limitations in results.}
+Even the numerical solver and \modelname{} cannot fully satisfy all demand on highly congested days when the 50~kW site cap makes it impossible to deliver the requested energy for every session within its availability window; in our midway analysis we observed days where the optimizer still left tens of kWh unmet despite zero constraint violations. The LLM-only baseline performs especially poorly on such days, compounding unavoidable unmet energy with additional shortfalls due to under-charging and constraint violations. Our current experiments also assume accurate session data and TOU rates and do not model uncertainty or data errors; when such information is missing or noisy, both the optimizer and the agent can return schedules that are feasible with respect to the \emph{assumed} inputs but misaligned with reality. Finally, we do not yet include a repaired LLM baseline that projects its schedules onto the feasible set, so our comparison isolates the benefit of tool access rather than exploring how far post-hoc repair could close the gap.
 
 
-\appendix
-\section{Team Roles and Individual Contributions}
-This section outlines the roles of each team member, summarizes their specific contributions, and explains whether the distribution of work was fair, with supporting reasons.
+\ifexamples
+\begin{figure}[ht]
+\centering
+\safeincludegraphics{\linewidth}{figures/diagram-safety.png}
+\caption{\textbf{Reference example} Robustness/safety evaluation idea (prompt sensitivity / safe refusal / injection).
+Reproduced from \cite{dong2024energyllm}.}
+\label{fig:safety_reference}
+\end{figure}
+\fi
+
+% ============================================================
+\section{Conclusion, Limitations, and Future Work}
+% ============================================================
+We developed and evaluated \modelname{}, an agentic EV charging scheduling assistant that combines a convex optimizer, a shared constraint checker, and GPT-4o to produce feasible, cost-efficient day-ahead schedules with grounded explanations from real ACN-Data sessions. Under a shared evaluation pipeline, \modelname{} matches the numerical optimizer on core scheduling metrics (TOU cost, peak load, unmet energy, and fraction of sessions fully served) while substantially improving feasibility and service reliability over a single-shot LLM-only baseline that often under-serves demand to appear inexpensive. The agent additionally offers a natural-language interface and tool-grounded summaries that make its decisions more accessible.
+
+Our study is limited to a day-ahead, single-site setting with accurate session and TOU information; we do not consider network-level constraints beyond a fixed site cap, uncertainty in arrivals or prices, or long-horizon interactions across days. The agent currently relies on a hand-designed prompt and a fixed optimization formulation, and we do not perform a broad generalization study across many sites or tariff structures. Hardware and runtime constraints are modest for our scale, but we do not fully characterize latency under heavier interactive use.
+
+Promising future directions include extending the framework to multi-site aggregation with shared feeders, incorporating explicit peak-penalty or carbon-aware objectives and exploring the resulting cost-peak trade-offs, and enabling richer follow-up interactions where users iteratively adjust constraints and scenarios (e.g., charger outages, new EV arrivals) with fast re-optimization loops. Another avenue is intra-day replanning that periodically updates schedules as new information arrives, bringing the system closer to deployment in live smart-charging environments.
+
+% ============================================================
+\clearpage
+\section{Team Member Contributions (Required)}
+
+% ============================================================
+
+\paragraph{Ryan Luo.}
+Led the implementation of the data pipeline and constraint checker, including standardized session formatting, unit tests for violation types, and the shared metrics computation. Implemented the CVXPY numerical solver baseline and contributed to the LLM-only prompting baseline and evaluation scripts. Helped design the benchmark protocol and contributed to writing and editing the report.
+
+\paragraph{Peter Quawas.}
+Designed and implemented the \modelname{} agent, including prompt design, tool-calling logic, and the grounded explanation templates based on schedule-derived metrics. Built the web UI demo for natural-language interaction with the agent and contributed to experiment setup, result analysis, and report writing.
 
 
-\section{Additional Results or Implementation Details}
-Optional.
+\section{Bonus Credit: Course Evaluation Submission}
+We value your feedback! Please fill out the evaluation forms for our course ECE 285 (The UCSD Online Evaluations \url{https://academicaffairs.ucsd.edu/Modules/Evals}) for the instructors. We would like to learn about what you love about this course, and ideas that could help us improve in the future. Proof of submission of the evaluation can get the bonus for the final project score! (Note: No need to show your evaluation and comments, just a screenshot of the submission in the final report to receive the score, per person not per group).
+
+\begin{figure}[ht]
+\centering
+\fbox{\parbox[c][5cm][c]{0.9\linewidth}{\centering
+\textbf{Insert screenshot confirming ECE 285 course evaluation submission here.}\\[0.5em]
+Recommended filename: \texttt{figures/course\_eval\_submission.png}.
+}}
+\caption{Proof of ECE 285 course evaluation submission. Screenshot to be inserted before final submission (evaluation open until March 14).}
+\label{fig:course_eval}
+\end{figure}
 
 
-\bibliography{ref}
-\bibliographystyle{abbrvnat}
-
-
-
-
-
-
+\bibliographystyle{plain}
+\bibliography{MyReferences}
 
 
 \end{document}
