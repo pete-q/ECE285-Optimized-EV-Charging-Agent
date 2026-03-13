@@ -290,6 +290,12 @@ Table~\ref{tab:results} summarizes the 19-day benchmark. The numerical solver an
 
 The LLM-only baseline achieves a lower average cost (\$84.34 vs.\ \$97.19) only by dramatically under-delivering energy: 251.59~kWh unmet on average ($12\times$ worse) and only 31.83\% of sessions fully served vs.\ 73.86\%, while generating 86.11 constraint violations per day ($6.6\times$ more). Day-level examples illustrate severe instability: on 2019-05-08 the baseline costs \$2.02 but serves 0\% of sessions; on 2019-05-22 it inflates cost to \$192.05 while serving only 58.1\%. These results confirm that cost alone is an unreliable metric for this task; unmet energy and service rate must be evaluated jointly.
 
+\paragraph{Robustness: clean vs.\ perturbed inputs.}
+A key question raised during our project presentation is how each method behaves under \emph{clean} versus \emph{perturbed} user inputs. For the numerical solver and \modelname{}, robustness to input quality is asymmetric by design: the optimizer operates on structured session data, so its output quality depends entirely on the accuracy of the parsed input rather than prompt phrasing. By contrast, the LLM-only baseline receives the full problem as unstructured text; even minor prompt perturbations (e.g., reordering session fields, omitting units, or using informal time descriptions like ``around 6ish'') can cause the model to produce schedules with dramatically different --- and often worse --- feasibility. In \modelname{}, the agent's parsing step absorbs natural-language variability: because the optimizer only runs after the request has been converted to a standardized session table, the downstream schedule and metrics are invariant to superficial prompt differences as long as the parser extracts the same structured parameters. When the input is genuinely ambiguous or incomplete (e.g., missing departure times, unspecified energy requests), \modelname{} asks clarifying follow-up questions rather than guessing, while the LLM-only baseline must produce a schedule regardless, often silently filling in incorrect defaults. This architectural separation of parsing from optimization is the primary source of \modelname{}'s robustness advantage.
+
+\paragraph{Test case generation.}
+The 19 benchmark days were selected from the Caltech ACN-Data JPL site logs (2019) to span a representative range of operating conditions. We sampled days by session count --- from low-traffic days with as few as 4 sessions to congested days with up to 47 sessions --- ensuring coverage of both under-subscribed scenarios (where all demand can be trivially met) and over-subscribed scenarios (where the 50~kW site cap forces non-trivial unmet energy). All methods receive the identical session table per day, produced by a deterministic preprocessing script that maps raw ACN timestamps to 96-step indices, clips sessions to the day boundary, and computes per-session energy and max power. This shared pipeline guarantees that performance differences across methods reflect algorithmic capability, not data-preparation artifacts.
+
 \paragraph{Failure cases and limitations in results.}
 Even the numerical solver and \modelname{} cannot fully satisfy all demand on highly congested days when the 50~kW site cap makes it impossible to deliver the requested energy for every session within its availability window; in our midway analysis we observed days where the optimizer still left tens of kWh unmet despite zero constraint violations. The LLM-only baseline performs especially poorly on such days, compounding unavoidable unmet energy with additional shortfalls due to under-charging and constraint violations. Our current experiments also assume accurate session data and TOU rates and do not model uncertainty or data errors; when such information is missing or noisy, both the optimizer and the agent can return schedules that are feasible with respect to the \emph{assumed} inputs but misaligned with reality. Finally, we do not yet include a repaired LLM baseline that projects its schedules onto the feasible set, so our comparison isolates the benefit of tool access rather than exploring how far post-hoc repair could close the gap.
 
@@ -311,7 +317,14 @@ We developed and evaluated \modelname{}, an agentic EV charging scheduling assis
 
 Our study is limited to a day-ahead, single-site setting with accurate session and TOU information; we do not consider network-level constraints beyond a fixed site cap, uncertainty in arrivals or prices, or long-horizon interactions across days. The agent currently relies on a hand-designed prompt and a fixed optimization formulation, and we do not perform a broad generalization study across many sites or tariff structures. Hardware and runtime constraints are modest for our scale, but we do not fully characterize latency under heavier interactive use.
 
-Promising future directions include extending the framework to multi-site aggregation with shared feeders, incorporating explicit peak-penalty or carbon-aware objectives and exploring the resulting cost-peak trade-offs, and enabling richer follow-up interactions where users iteratively adjust constraints and scenarios (e.g., charger outages, new EV arrivals) with fast re-optimization loops. Another avenue is intra-day replanning that periodically updates schedules as new information arrives, bringing the system closer to deployment in live smart-charging environments.
+Promising future directions include:
+\begin{itemize}
+  \item \textbf{Conversational memory for parameter changes.} The current agent treats each query independently. Adding persistent text memory across turns would let users say ``now lower the site cap to 40~kW'' without re-specifying all session data, enabling incremental what-if exploration and multi-turn scheduling dialogues.
+  \item \textbf{Broader robustness and versatility.} The agent should gracefully handle a wider range of input perturbations --- informal time descriptions, missing fields, mixed units, and adversarial prompt injections --- by strengthening the parsing layer and adding explicit input-validation guards before calling the optimizer.
+  \item \textbf{Multi-site aggregation.} Extending the framework to coordinate charging across multiple sites with shared feeder constraints would bring the system closer to campus- or fleet-level deployment.
+  \item \textbf{Peak-penalty and carbon-aware objectives.} Incorporating explicit peak-load penalties or time-varying carbon intensity into the objective would let operators explore cost--peak and cost--carbon trade-offs.
+  \item \textbf{Intra-day replanning.} Periodically updating schedules as new session arrivals or price forecasts materialize would move the system from day-ahead planning toward real-time adaptive charging.
+\end{itemize}
 
 % ============================================================
 \clearpage
@@ -342,6 +355,5 @@ Recommended filename: \texttt{figures/course\_eval\_submission.png}.
 
 \bibliographystyle{plain}
 \bibliography{MyReferences}
-
 
 \end{document}
