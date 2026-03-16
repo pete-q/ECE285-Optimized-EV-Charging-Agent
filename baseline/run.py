@@ -32,8 +32,9 @@ def run_baseline(
     site: SiteConfig,
     tou: TOUConfig,
     api_key: Optional[str] = None,
-    model: str = "gpt-4o-mini",
+    model: str = "gpt-4o",
     max_completion_tokens: int = 8192,
+    instruction: Optional[str] = None,
 ) -> BaselineResult:
     """Run baseline: build prompt, call OpenAI, parse response to schedule.
 
@@ -76,7 +77,7 @@ def run_baseline(
         )
 
     # Build prompt text once; this is the only user message we send.
-    prompt_text = build_prompt(day, site, tou)
+    prompt_text = build_prompt(day, site, tou, instruction=instruction)
 
     # Lazily import the OpenAI client so that tests without the package can still run.
     try:

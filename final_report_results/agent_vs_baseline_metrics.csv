@@ -1,0 +1,4 @@
+pipeline,date,n_sessions,total_cost_usd,peak_load_kw,total_unmet_kwh,pct_fully_served,cost_reduction_pct,violation_count,feasible
+optimizer,2018-09-17,87,169.9565,50.0,158.45,22.99,17.77,67,False
+agent,2018-09-17,87,169.9565,50.0,158.45,22.99,17.77,67,False
+baseline,2018-09-17,87,21.4901,49.6888,765.4434,10.34,89.6,132,False

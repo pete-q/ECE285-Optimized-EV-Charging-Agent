@@ -17,9 +17,9 @@ class ParseResult:
     error_message: Optional[str] = None
 
 
-# Fraction of n_steps a "close" parse is allowed to deviate before we give up.
-# e.g. 0.1 means ±10% — so for n_steps=96 we accept 87–105 values.
-_CLOSE_THRESHOLD = 0.10
+# Fraction of n_steps a "close" parse is allowed to deviate before we try interpolation.
+# e.g. 0.25 means ±24 values for n_steps=96 — so we accept 72–120 via truncate/pad.
+_CLOSE_THRESHOLD = 0.25
 
 
 def _resample_to_n_steps(values: List[float], n_steps: int) -> Optional[List[float]]:
@@ -58,7 +58,15 @@ def _resample_to_n_steps(values: List[float], n_steps: int) -> Optional[List[flo
         # Pad with the last value to fill the gap.
         return values + [values[-1]] * (n_steps - n)
 
-    # Case 3: too far off to rescue.
+    # Case 3: use linear interpolation (e.g. 24 or 39 values → 96).
+    if 12 <= n <= n_steps * 2:
+        arr = np.asarray(values, dtype=float)
+        arr = np.where(np.isfinite(arr), arr, 0.0)
+        arr = np.maximum(arr, 0.0)
+        x_old = np.linspace(0, 1, n)
+        x_new = np.linspace(0, 1, n_steps)
+        return list(np.interp(x_new, x_old, arr))
+
     return None
 
 
@@ -87,6 +95,11 @@ def parse_llm_schedule(
     n_sessions = len(day.sessions)
     n_steps = day.n_steps
     schedule = np.zeros((n_sessions, n_steps), dtype=float)
+
+    def _sanitize(s: np.ndarray) -> None:
+        """Replace inf/nan with 0, clamp negative to 0. Prevents numpy warnings in metrics."""
+        s[:] = np.where(np.isfinite(s), s, 0.0)
+        np.maximum(s, 0.0, out=s)
 
     # Empty day: trivial schedule, no need to parse
     if n_sessions == 0 or n_steps == 0:
@@ -187,6 +200,7 @@ def parse_llm_schedule(
             schedule[row_idx, :] = values
             row_idx += 1
 
+        _sanitize(schedule)
         if row_idx == 0:
             return ParseResult(
                 schedule=schedule,
@@ -204,6 +218,7 @@ def parse_llm_schedule(
         # Try a more permissive numeric-matrix parse before giving up.
         return _fallback_matrix_parse(lines)
 
+    _sanitize(schedule)
     if errors:
         # We still return the partially filled schedule, but mark parse as failed.
         return ParseResult(

@@ -172,15 +172,15 @@ def build_prompt(
     # -------------------------------------------------------------------------
     # 7. Final reminder
     # -------------------------------------------------------------------------
+    if instruction:
+        lines.append("CONTEXT:")
+        lines.append(instruction)
+        lines.append("")
+
     lines.append("Now produce your schedule. Output only the Session lines, no other text.")
     lines.append(
         f"Remember: {n_sessions} lines, each with exactly {n_steps} space-separated numbers."
     )
-
-    if instruction:
-        lines.append("")
-        lines.append("ADDITIONAL INSTRUCTION:")
-        lines.append(instruction)
 
     return "\n".join(lines)
 
