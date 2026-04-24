@@ -274,6 +274,7 @@ def run_agent_llm(
     model: str = "gpt-4o",
     api_key: Optional[str] = None,
     max_tool_rounds: int = 3,
+    temperature: float = 0.0,
 ) -> tuple[np.ndarray, float, float, float, bool, str]:
     """Run the LLM agent with a CVXPY solver tool.
 
@@ -335,7 +336,7 @@ def run_agent_llm(
             messages=messages,
             tools=[_SOLVE_TOOL],
             tool_choice="auto",
-            temperature=0.0,
+            temperature=temperature,
         )
         choice = response.choices[0]
         assistant_msg = choice.message
@@ -379,7 +380,7 @@ def run_agent_llm(
         response = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.0,
+            temperature=temperature,
         )
         explanation = (response.choices[0].message.content or "").strip()
 

@@ -200,11 +200,12 @@ def run_phase_agent(
     tou: TOUConfig,
     nl_request: str,
     per_day_dir: Path,
+    temperature: float = 0.0,
 ) -> Optional[Tuple[Dict[str, object], np.ndarray]]:
     """Run agent pipeline. Returns (metrics_row, schedule) or None."""
     if not os.environ.get("OPENAI_API_KEY", "").strip():
         return None
-    agent_result = run_agent(day, site, tou, request=nl_request)
+    agent_result = run_agent(day, site, tou, request=nl_request, temperature=temperature)
     check_result = check(agent_result.schedule, day, site)
     uc = charge_asap_schedule(day, float(site.get_P_max_at_step(0)))
     uc_cost = total_cost(uc, tou, day.dt_hours)
@@ -231,6 +232,7 @@ def run_phase_baseline(
     tou: TOUConfig,
     nl_request: str,
     per_day_dir: Path,
+    temperature: float = 0.0,
 ) -> Optional[Tuple[Dict[str, object], np.ndarray]]:
     """Run LLM baseline with same NL input as agent. Returns (metrics_row, schedule) or None."""
     if not os.environ.get("OPENAI_API_KEY", "").strip():
@@ -240,6 +242,7 @@ def run_phase_baseline(
         model=BASELINE_MODEL,
         max_completion_tokens=BASELINE_MAX_TOKENS,
         instruction=nl_request,
+        temperature=temperature,
     )
     if not baseline_result.parse_success:
         print(f"    [Baseline] WARNING: parse failed — {baseline_result.parse_error}")

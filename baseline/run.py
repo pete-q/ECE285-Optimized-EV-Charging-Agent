@@ -35,6 +35,7 @@ def run_baseline(
     model: str = "gpt-4o",
     max_completion_tokens: int = 8192,
     instruction: Optional[str] = None,
+    temperature: float = 0.0,
 ) -> BaselineResult:
     """Run baseline: build prompt, call OpenAI, parse response to schedule.
 
@@ -117,7 +118,7 @@ def run_baseline(
                 },
             ],
             max_tokens=max_completion_tokens,
-            temperature=0.0,
+            temperature=temperature,
         )
     except Exception as exc:  # pragma: no cover - depends on network and external API
         return BaselineResult(

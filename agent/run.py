@@ -70,6 +70,7 @@ def run_agent(
     tou: TOUConfig,
     request: str = "Minimize energy cost for this day.",
     max_retries: int = 1,
+    temperature: float = 0.0,
 ) -> AgentResult:
     """Run the LLM agent with CVXPY solver tool.
 
@@ -101,6 +102,7 @@ def run_agent(
         tou,
         request=request,
         max_tool_rounds=max_tool_rounds,
+        temperature=temperature,
     )
 
     return AgentResult(
