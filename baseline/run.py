@@ -1,4 +1,4 @@
-"""Single entry point: load env, get sessions, build prompt, call LLM, parse schedule."""
+"""Baseline runner: build prompt, call LLM, parse the schedule out of the response."""
 
 from dataclasses import dataclass
 import os
@@ -14,8 +14,6 @@ from baseline.parse import ParseResult, parse_llm_schedule
 
 @dataclass
 class BaselineResult:
-    """Result of running the baseline."""
-
     schedule: np.ndarray
     parse_success: bool
     raw_response: Optional[str] = None
@@ -23,7 +21,6 @@ class BaselineResult:
 
 
 def _default_schedule(day: DaySessions) -> np.ndarray:
-    """Return a zero schedule with the correct shape for the given day."""
     return np.zeros((len(day.sessions), day.n_steps), dtype=float)
 
 
@@ -37,113 +34,127 @@ def run_baseline(
     instruction: Optional[str] = None,
     temperature: float = 0.0,
 ) -> BaselineResult:
-    """Run baseline: build prompt, call OpenAI, parse response to schedule.
-
-    Token and cost safeguards:
-      - If there are no sessions or no time steps, we skip the LLM call and
-        immediately return a zero schedule.
-      - The prompt is a single well-structured message (no long chat history).
-      - `max_completion_tokens` defaults to 2048 so we avoid unbounded output;
-        callers can lower this further if needed.
-    """
-    # Basic consistency checks so we do not send inconsistent data to the model.
     if tou.n_steps != day.n_steps:
         raise ValueError(
-            f"TOUConfig.n_steps ({tou.n_steps}) must match DaySessions.n_steps ({day.n_steps})."
+            f"TOUConfig.n_steps ({tou.n_steps}) != DaySessions.n_steps ({day.n_steps})"
         )
     if site.n_steps != day.n_steps:
         raise ValueError(
-            f"SiteConfig.n_steps ({site.n_steps}) must match DaySessions.n_steps ({day.n_steps})."
+            f"SiteConfig.n_steps ({site.n_steps}) != DaySessions.n_steps ({day.n_steps})"
         )
     if day.dt_hours <= 0.0:
-        raise ValueError(f"DaySessions.dt_hours must be positive, got {day.dt_hours}.")
+        raise ValueError(f"dt_hours must be positive, got {day.dt_hours}")
 
-    # Trivial case: nothing to schedule.
     if len(day.sessions) == 0 or day.n_steps == 0:
         return BaselineResult(
             schedule=_default_schedule(day),
             parse_success=True,
-            raw_response=None,
-            parse_error=None,
         )
 
-    # Resolve API key from argument or environment.
-    key = api_key or os.environ.get("OPENAI_API_KEY")
-    if not key:
-        return BaselineResult(
-            schedule=_default_schedule(day),
-            parse_success=False,
-            raw_response=None,
-            parse_error="OPENAI_API_KEY is not set; cannot call the baseline LLM.",
-        )
+    is_claude = model.startswith("claude-")
 
-    # Build prompt text once; this is the only user message we send.
+    if is_claude:
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            return BaselineResult(
+                schedule=_default_schedule(day),
+                parse_success=False,
+                parse_error="ANTHROPIC_API_KEY not set",
+            )
+    else:
+        key = api_key or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            return BaselineResult(
+                schedule=_default_schedule(day),
+                parse_success=False,
+                parse_error="OPENAI_API_KEY not set",
+            )
+
     prompt_text = build_prompt(day, site, tou, instruction=instruction)
 
-    # Lazily import the OpenAI client so that tests without the package can still run.
-    try:
-        from openai import OpenAI  # type: ignore[import]
-    except ImportError as exc:  # pragma: no cover - environment-specific
+    system_prompt = (
+        "You output ONLY the schedule: one line per session, each line "
+        "'Session i: v0 v1 v2 ...' with exactly the number of space-separated "
+        "floats specified in the prompt (one per time step). No commentary, "
+        "no explanations. Follow the algorithm in the prompt. Ensure every "
+        "line has the correct number of values; zeros outside each session's "
+        "window, positive power inside until energy_kwh is delivered."
+    )
+
+    def _call_llm():
+        # Claude uses the native Anthropic SDK; GPT uses OpenAI directly.
+        # Claude at temperature>0 sometimes outputs chain-of-thought instead of
+        # the schedule, so we retry up to 3 times when parsing fails.
+        if is_claude:
+            try:
+                import anthropic as _anthropic  # type: ignore[import]
+            except ImportError as exc:  # pragma: no cover
+                return None, f"anthropic package not installed: {exc}"
+            try:
+                client = _anthropic.Anthropic(api_key=key)
+                msg = client.messages.create(
+                    model=model,
+                    max_tokens=max_completion_tokens,
+                    temperature=temperature,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": prompt_text}],
+                )
+                return (msg.content[0].text if msg.content else ""), None
+            except Exception as exc:  # pragma: no cover
+                return None, str(exc)
+        else:
+            try:
+                from openai import OpenAI  # type: ignore[import]
+            except ImportError as exc:  # pragma: no cover
+                return None, f"openai package not installed: {exc}"
+            try:
+                client = OpenAI(api_key=key)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt_text},
+                    ],
+                    max_tokens=max_completion_tokens,
+                    temperature=temperature,
+                )
+                if not resp.choices:
+                    return None, "API returned no choices"
+                return resp.choices[0].message.content or "", None
+            except Exception as exc:  # pragma: no cover
+                return None, str(exc)
+
+    max_attempts = 3
+    last_response: Optional[str] = None
+    last_error: Optional[str] = None
+
+    for _ in range(max_attempts):
+        response_text, call_error = _call_llm()
+        if response_text is None:
+            last_error = call_error
+            continue
+
+        last_response = response_text
+        parse_result: ParseResult = parse_llm_schedule(response_text, day)
+        if parse_result.success:
+            return BaselineResult(
+                schedule=parse_result.schedule,
+                parse_success=True,
+                raw_response=response_text,
+            )
+        last_error = parse_result.error_message
+
+    if last_response is not None:
+        parse_result = parse_llm_schedule(last_response, day)
         return BaselineResult(
-            schedule=_default_schedule(day),
+            schedule=parse_result.schedule,
             parse_success=False,
-            raw_response=None,
-            parse_error=(
-                "The 'openai' package is not installed. "
-                "Install it with 'pip install openai>=1.0.0' to run the baseline. "
-                f"Underlying error: {exc}"
-            ),
+            raw_response=last_response,
+            parse_error=f"Parse failed after {max_attempts} attempts. Last error: {last_error}",
         )
-
-    client = OpenAI(api_key=key)
-
-    try:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You output ONLY the schedule: one line per session, each line "
-                        "'Session i: v0 v1 v2 ...' with exactly the number of space-separated "
-                        "floats specified in the prompt (one per time step). No commentary, "
-                        "no explanations. Follow the algorithm in the prompt. Ensure every "
-                        "line has the correct number of values; zeros outside each session's "
-                        "window, positive power inside until energy_kwh is delivered."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt_text,
-                },
-            ],
-            max_tokens=max_completion_tokens,
-            temperature=temperature,
-        )
-    except Exception as exc:  # pragma: no cover - depends on network and external API
-        return BaselineResult(
-            schedule=_default_schedule(day),
-            parse_success=False,
-            raw_response=None,
-            parse_error=f"Error while calling the OpenAI API: {exc}",
-        )
-
-    if not completion.choices:
-        return BaselineResult(
-            schedule=_default_schedule(day),
-            parse_success=False,
-            raw_response=None,
-            parse_error="OpenAI API returned no choices.",
-        )
-
-    response_text = completion.choices[0].message.content or ""
-
-    # Parse the LLM output into a schedule matrix.
-    parse_result: ParseResult = parse_llm_schedule(response_text, day)
 
     return BaselineResult(
-        schedule=parse_result.schedule,
-        parse_success=parse_result.success,
-        raw_response=response_text,
-        parse_error=parse_result.error_message,
+        schedule=_default_schedule(day),
+        parse_success=False,
+        parse_error=f"All {max_attempts} LLM calls failed. Last error: {last_error}",
     )

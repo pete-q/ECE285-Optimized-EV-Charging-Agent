@@ -301,21 +301,31 @@ def run_agent_llm(
                   feasible, explanation).
     """
     
-    key = api_key or os.environ.get("OPENAI_API_KEY", "").strip()
-    if not key:
-        raise ValueError(
-            "OPENAI_API_KEY is not set. Set it in .env or pass api_key to run_agent_llm."
-        )
+    is_claude = model.startswith("claude-")
+
+    if is_claude:
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not key:
+            raise ValueError("ANTHROPIC_API_KEY not set")
+    else:
+        key = api_key or os.environ.get("OPENAI_API_KEY", "").strip()
+        if not key:
+            raise ValueError("OPENAI_API_KEY not set")
 
     try:
         from openai import OpenAI  # type: ignore[import]
     except ImportError as exc:
-        raise ImportError(
-            "The 'openai' package is not installed. "
-            "Install it with 'pip install openai>=1.0.0'."
-        ) from exc
+        raise ImportError("pip install openai>=1.0.0") from exc
 
-    client = OpenAI(api_key=key)
+    if is_claude:
+        # route Claude through the OpenAI-compatible Anthropic endpoint
+        client = OpenAI(
+            api_key=key,
+            base_url="https://api.anthropic.com/v1",
+            default_headers={"anthropic-version": "2023-06-01"},
+        )
+    else:
+        client = OpenAI(api_key=key)
 
     # Input = natural-language problem description + user request. Tool access is
     # via the tools parameter; the LLM calls solve_ev_schedule when it needs to.

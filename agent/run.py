@@ -71,22 +71,10 @@ def run_agent(
     request: str = "Minimize energy cost for this day.",
     max_retries: int = 1,
     temperature: float = 0.0,
+    model: str = "gpt-4o",
 ) -> AgentResult:
-    """Run the LLM agent with CVXPY solver tool.
-
-    Args:
-        day: DaySessions with sessions and horizon.
-        site: SiteConfig with power cap.
-        tou: TOUConfig with TOU rates.
-        request: Natural-language request sent to the LLM.
-        max_retries: Passed through as max_tool_rounds; lets the LLM call the
-            solver more than once if needed (default 1 → cap at 3 rounds).
-
-    Returns:
-        AgentResult with schedule, metrics, feasibility, and LLM explanation.
-    """
-    # max_retries maps to max_tool_rounds; add 2 to allow the LLM at least one
-    # tool call plus a retry before the explanation turn.
+    """Run the LLM agent with CVXPY solver tool."""
+    # give the LLM at least one tool call + a retry before the explanation turn
     max_tool_rounds = max(3, max_retries + 2)
 
     (
@@ -101,6 +89,7 @@ def run_agent(
         site,
         tou,
         request=request,
+        model=model,
         max_tool_rounds=max_tool_rounds,
         temperature=temperature,
     )

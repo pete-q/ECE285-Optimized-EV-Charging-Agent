@@ -102,6 +102,7 @@ def _run_single(
     out_dir: Path,
     temperature: float,
     *,
+    model: str,
     skip_optimizer: bool,
     skip_agent: bool,
     skip_baseline: bool,
@@ -140,7 +141,7 @@ def _run_single(
 
         if not skip_agent:
             try:
-                out = run_phase_agent(day_date, day, site, tou, nl_request, per_day_dir, temperature)
+                out = run_phase_agent(day_date, day, site, tou, nl_request, per_day_dir, temperature, model=model)
                 if out:
                     row, _ = out
                     all_rows.append(row)
@@ -152,7 +153,7 @@ def _run_single(
 
         if not skip_baseline:
             try:
-                out = run_phase_baseline(day_date, day, site, tou, nl_request, per_day_dir, temperature)
+                out = run_phase_baseline(day_date, day, site, tou, nl_request, per_day_dir, temperature, model=model)
                 if out:
                     row, _ = out
                     all_rows.append(row)
@@ -307,15 +308,20 @@ def main() -> None:
     )
     parser.add_argument("--nruns", type=int, default=5,
                         help="Number of independent runs (default: 5)")
+    parser.add_argument("--start-run", type=int, default=1,
+                        help="Resume from this run number (default: 1); earlier runs are loaded from existing CSVs")
     parser.add_argument("--temperature", type=float, default=0.7,
                         help="LLM temperature for agent and baseline (default: 0.7)")
+    parser.add_argument("--model", type=str, default="gpt-4o",
+                        help="LLM model for agent and baseline (default: gpt-4o). "
+                             "Use a claude-* name (e.g. claude-sonnet-4-5) with ANTHROPIC_API_KEY set.")
     parser.add_argument("--ndays", type=int, default=None,
                         help="Use first N benchmark dates per run (default: all 20)")
     parser.add_argument("--dates", nargs="+", default=None,
                         help="Override date list as YYYY-MM-DD")
     parser.add_argument("--output-dir", type=Path,
-                        default=_project_root / "benchmark_results" / "vary_temperature",
-                        help="Root output directory")
+                        default=None,
+                        help="Root output directory (default: benchmark_results/vary_temperature_<model>)")
     parser.add_argument("--skip-optimizer", action="store_true")
     parser.add_argument("--skip-baseline",  action="store_true")
     parser.add_argument("--skip-agent",     action="store_true")
@@ -327,27 +333,59 @@ def main() -> None:
     if args.ndays is not None:
         dates = dates[: args.ndays]
 
+    if args.output_dir is None:
+        safe_model = args.model.replace("/", "_").replace(":", "_")
+        args.output_dir = _project_root / "benchmark_results" / f"vary_temperature_{safe_model}"
+
     out_dir = args.output_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        print("WARNING: OPENAI_API_KEY not set — agent and baseline will be skipped.", file=sys.stderr)
+    _is_claude = args.model.startswith("claude-")
+    if _is_claude:
+        if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+            print("WARNING: ANTHROPIC_API_KEY not set — agent and baseline will be skipped.", file=sys.stderr)
+    else:
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            print("WARNING: OPENAI_API_KEY not set — agent and baseline will be skipped.", file=sys.stderr)
     if not os.environ.get("ACN_DATA_API_TOKEN", "").strip():
         print("WARNING: ACN_DATA_API_TOKEN not set — session loading may fail.", file=sys.stderr)
 
     print(f"Output root : {out_dir}")
     print(f"Runs        : {args.nruns}")
+    print(f"Model       : {args.model}")
     print(f"Temperature : {args.temperature}")
     print(f"Dates/run   : {len(dates)} ({dates[0]} to {dates[-1]}) — same set every run")
     print()
 
     all_run_rows: List[Tuple[int, List[Dict]]] = []
-    for run_id in range(1, args.nruns + 1):
+
+    # Load already-completed runs from disk so aggregation covers all runs.
+    for run_id in range(1, args.start_run):
+        csv_path = out_dir / f"run_{run_id}" / "agent_vs_baseline_metrics.csv"
+        if csv_path.exists():
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = []
+                for row in reader:
+                    typed: Dict = {}
+                    for k, v in row.items():
+                        try:
+                            typed[k] = float(v)
+                        except (ValueError, TypeError):
+                            typed[k] = v
+                    rows.append(typed)
+            print(f"Loaded existing run_{run_id} from {csv_path} ({len(rows)} rows)")
+            all_run_rows.append((run_id, rows))
+        else:
+            print(f"WARNING: run_{run_id} CSV not found at {csv_path}, skipping.")
+
+    for run_id in range(args.start_run, args.nruns + 1):
         print(f"{'='*60}")
         print(f"RUN {run_id} / {args.nruns}  (temperature={args.temperature})")
         print(f"{'='*60}")
         rows = _run_single(
             run_id, dates, out_dir, args.temperature,
+            model=args.model,
             skip_optimizer=args.skip_optimizer,
             skip_agent=args.skip_agent,
             skip_baseline=args.skip_baseline,

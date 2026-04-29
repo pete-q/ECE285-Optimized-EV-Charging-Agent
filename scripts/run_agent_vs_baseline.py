@@ -87,7 +87,14 @@ P_MAX_KW = 50.0
 OUTPUT_DIR = _project_root / "benchmark_results"
 
 BASELINE_MODEL = "gpt-4o"
+AGENT_MODEL = "gpt-4o"
 BASELINE_MAX_TOKENS = 16384
+
+
+def _has_api_key(model: str) -> bool:
+    if model.startswith("claude-"):
+        return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    return bool(os.environ.get("OPENAI_API_KEY", "").strip())
 
 
 def _step_to_time(step: int, dt_hours: float) -> str:
@@ -201,11 +208,12 @@ def run_phase_agent(
     nl_request: str,
     per_day_dir: Path,
     temperature: float = 0.0,
+    model: str = AGENT_MODEL,
 ) -> Optional[Tuple[Dict[str, object], np.ndarray]]:
     """Run agent pipeline. Returns (metrics_row, schedule) or None."""
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
+    if not _has_api_key(model):
         return None
-    agent_result = run_agent(day, site, tou, request=nl_request, temperature=temperature)
+    agent_result = run_agent(day, site, tou, request=nl_request, temperature=temperature, model=model)
     check_result = check(agent_result.schedule, day, site)
     uc = charge_asap_schedule(day, float(site.get_P_max_at_step(0)))
     uc_cost = total_cost(uc, tou, day.dt_hours)
@@ -233,13 +241,14 @@ def run_phase_baseline(
     nl_request: str,
     per_day_dir: Path,
     temperature: float = 0.0,
+    model: str = BASELINE_MODEL,
 ) -> Optional[Tuple[Dict[str, object], np.ndarray]]:
     """Run LLM baseline with same NL input as agent. Returns (metrics_row, schedule) or None."""
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
+    if not _has_api_key(model):
         return None
     baseline_result = run_baseline(
         day=day, site=site, tou=tou,
-        model=BASELINE_MODEL,
+        model=model,
         max_completion_tokens=BASELINE_MAX_TOKENS,
         instruction=nl_request,
         temperature=temperature,
