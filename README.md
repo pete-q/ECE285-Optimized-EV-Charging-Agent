@@ -2,7 +2,12 @@
 
 **Group 10**: Ryan Luo, Peter Quawas
 
-This project builds a day-ahead EV charging scheduler for a shared parking facility and compares three approaches: a direct-prompt LLM baseline, a CVXPY optimizer, and a full agentic pipeline (Plan → Optimize → Validate → Refine → Explain). We use real session data from [Caltech ACN-Data](https://ev.caltech.edu), minimize time-of-use energy cost under per-charger and site capacity constraints, and evaluate explanation faithfulness. There's also a FastAPI web GUI for interactive natural-language scheduling.
+This repository contains a day-ahead EV charging benchmark with three pipelines:
+- Optimizer (CVXPY)
+- Direct LLM baseline
+- Agent pipeline (Plan -> Optimize -> Validate -> Refine -> Explain)
+
+For reproducibility, all benchmark scripts write explicit artifacts (CSV, markdown summaries, plots) under `benchmark_results/` and can be rerun from the project root with fixed dates, seeds, and model settings.
 
 ## Layout
 
@@ -25,7 +30,7 @@ This project builds a day-ahead EV charging scheduler for a shared parking facil
 
 ## Setup
 
-### 1. Clone and install acnportal
+### 1) Clone the project and `acnportal`
 
 ```bash
 git clone <this-repo-url>
@@ -33,9 +38,9 @@ cd Project
 git clone https://github.com/zach401/acnportal acnportal
 ```
 
-The `acnportal` library is not bundled in this repo and needs to be cloned separately.
+`acnportal` is intentionally kept as a separate dependency and is installed from `./acnportal` via `requirements.txt`.
 
-### 2. Create a virtual environment
+### 2) Create and activate a virtual environment
 
 ```bash
 python -m venv .venv
@@ -43,22 +48,43 @@ source .venv/bin/activate    # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-(`uv` also works: `uv venv && uv pip install -r requirements.txt`)
+If you prefer `uv`, this also works:
 
-### 3. Set up API keys
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
 
-Copy `.env.example` to `.env` and fill in your keys:
+### 3) Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-```
-ACN_DATA_API_TOKEN=your_caltech_acn_token   # from https://ev.caltech.edu
-OPENAI_API_KEY=your_openai_key
+Add whichever keys match your run mode:
+
+```bash
+ACN_DATA_API_TOKEN=your_caltech_acn_token   # required for ACN API-backed runs
+OPENAI_API_KEY=your_openai_key              # required for gpt-* models
+ANTHROPIC_API_KEY=your_anthropic_key        # required for claude-* models
 ```
 
-`ACN_DATA_API_TOKEN` is needed for any script that fetches live session data. `OPENAI_API_KEY` is needed for the baseline, agent, and web GUI. Neither is committed — `.env` is gitignored.
+Notes:
+- `ACN_DATA_API_TOKEN` is required for any command that fetches real sessions from ACN-Data.
+- For LLM phases (baseline/agent), you need either `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, depending on model family.
+- `.env` is gitignored and should stay local.
+
+### 4) Verify environment before running benchmarks
+
+```bash
+python --version
+pip --version
+python -c "import cvxpy, numpy, pandas, matplotlib; print('deps ok')"
+pytest -q
+```
+
+If `pytest -q` passes, the local environment is ready for benchmark reproduction.
 
 ## Tests
 
@@ -102,62 +128,180 @@ Needs `OPENAI_API_KEY` in `.env`.
 
 ## Running the Pipelines
 
-All commands below should be run from the project root with the venv active.
+Run all commands from the repo root with your virtual environment active.
 
-### Phase A — Optimizer only
+### Reproducibility checklist (recommended order)
+
+1. Verify the optimizer is working deterministically:
 
 ```bash
 python -m scripts.run_phase_a --site caltech --date 2019-06-15
 ```
 
-Pulls sessions from the ACN-Data API, solves the CVXPY schedule, checks constraints, prints metrics (cost, peak load, unmet energy, % fully served, % cost reduction vs uncontrolled), and saves plots to `experiments/`. Needs `ACN_DATA_API_TOKEN`.
-
-### Phase B — LLM Baseline
+2. Run a quick 3-pipeline smoke test over a few dates (temperature=0, not the paper configuration):
 
 ```bash
-python -m scripts.run_baseline --site caltech --date 2019-06-15
+python -m scripts.run_agent_vs_baseline --dates 2019-05-01 2019-05-08 2019-05-15
 ```
 
-Sends session data as a natural-language prompt and parses the LLM's returned schedule. Checks constraints and prints the same metrics. Needs `OPENAI_API_KEY`.
+3. Run the full paper experiments (see Exact rerun recipes below).
 
-### Phase C — Agentic Pipeline
+4. Recompute summary tables from any existing CSV without rerunning:
 
 ```bash
+python -m scripts.recompute_averages --csv benchmark_results/agent_vs_baseline_metrics.csv --mode both
+```
+
+### Single-day sanity commands
+
+```bash
+# Optimizer only (no LLM)
+python -m scripts.run_phase_a --site caltech --date 2019-06-15
+
+# Baseline LLM
+python -m scripts.run_baseline --site caltech --date 2019-06-15 --model gpt-4o
+
+# Full agent pipeline
 python -m scripts.run_agent --site caltech --date 2019-06-15
 ```
 
-Runs the full Plan → Optimize → Validate → Refine → Explain pipeline, then checks constraints and saves plots. Needs `OPENAI_API_KEY`.
+What each command does:
+- `run_phase_a`: deterministic CVXPY optimizer + constraint checks + metrics + plots.
+- `run_baseline`: prompt-only LLM scheduler + parser + checks/metrics.
+- `run_agent`: full Plan -> Optimize -> Validate -> Refine -> Explain pipeline.
 
-### Full Benchmark (A + B + C)
+### API mode vs text mode
+
+`run_agent` supports two ways to run:
 
 ```bash
-python -m scripts.run_benchmark_abc
-python -m scripts.run_benchmark_abc --sites caltech jpl --ndays 15
-python -m scripts.run_benchmark_abc --sites caltech --dates 2019-06-15 2019-06-16 --skip-c
+# API mode: pulls real ACN sessions (needs ACN_DATA_API_TOKEN)
+python -m scripts.run_agent --site caltech --date 2019-01-15
+
+# Text mode: no ACN API token needed
+python -m scripts.run_agent --text "I have 2 EVs: EV1 arrives 6pm leaves 10pm needs 20 kWh, EV2 arrives 7pm leaves 11pm needs 15 kWh"
 ```
 
-Runs all three phases across multiple sites and days and writes results to `benchmark_results/metrics_abc.csv` and `metrics_abc.json`. Options: `--sites`, `--ndays`, `--dates`, `--output-dir`, `--skip-b`, `--skip-c`. Needs both keys.
+For benchmark reproduction, prefer API mode with explicit `--date` values.
 
-### Agent vs Baseline Comparison
+### Standard benchmark (optimizer vs baseline vs agent)
 
 ```bash
 python -m scripts.run_agent_vs_baseline
 python -m scripts.run_agent_vs_baseline --ndays 10
+python -m scripts.run_agent_vs_baseline --dates 2019-06-15 2019-06-16
 python -m scripts.run_agent_vs_baseline --skip-baseline
 ```
 
-Runs the optimizer, baseline, and agent on the same natural-language input for each day and compares results. Outputs per-day plots to `benchmark_results/per_day/`, plus `day_by_day_comparison.md`, `average_results_table.md`, and `average_results_bar.png`. Options: `--ndays`, `--output-dir`, `--skip-optimizer`, `--skip-baseline`, `--skip-agent`, `--dates`. Needs `OPENAI_API_KEY`.
+Main outputs go to `benchmark_results/`:
+- `agent_vs_baseline_metrics.csv`
+- `day_by_day_comparison.md`
+- `average_results_table.md`
+- `average_results_bar.png`
+- `per_day/*.png` plots for each pipeline/day
+
+Determinism notes:
+- Optimizer outputs are deterministic for a fixed date/configuration.
+- LLM outputs depend on model and temperature settings.
+- To minimize stochastic variation, use fixed dates and temperature `0.0` where applicable.
+
+### Multi-run benchmarks (variance and robustness analysis)
+
+The two temperature-variation runs below are the ones used in the paper (see Exact rerun recipes). The others are additional experiments available for exploratory use.
+
+```bash
+# Paper experiment: non-zero LLM temperature, same dates every run
+python -m scripts.run_benchmark_vary_temperature --nruns 5 --temperature 0.7 --model gpt-4o
+python -m scripts.run_benchmark_vary_temperature --nruns 5 --temperature 0.7 --model claude-sonnet-4-6
+
+# Additional: repeat same date set across runs, temperature fixed to 0.0
+python -m scripts.run_multi_run_benchmark --nruns 5 --ndays 20
+
+# Additional: sample different date subsets each run (date-composition sensitivity)
+python -m scripts.run_benchmark_vary_dates --nruns 5 --ndays 19 --seed 42
+```
+
+Outputs are written under `benchmark_results/` in run-specific folders (for example `vary_dates/` and `vary_temperature_<model>/`) with:
+- per-run CSVs/plots
+- `all_runs_metrics.csv`
+- `multi_run_average_table.md`
+- `multi_run_average_bar.png`
+
+Resume support (temperature benchmark):
+
+```bash
+python -m scripts.run_benchmark_vary_temperature --nruns 5 --start-run 3 --temperature 0.7 --model gpt-4o
+```
+
+This reuses `run_1` and `run_2` from disk and continues from run 3.
+
+### Script-to-key matrix
+
+| Script | Needs ACN token | Needs LLM key |
+|------|------------------|---------------|
+| `run_phase_a` | Yes | No |
+| `run_baseline` | Yes | Yes |
+| `run_agent` (API mode) | Yes | Yes |
+| `run_agent` (text mode) | No | Yes |
+| `run_agent_vs_baseline` | Yes | Yes |
+| `run_multi_run_benchmark` | Yes | Yes (unless skipping LLM phases) |
+| `run_benchmark_vary_dates` | Yes | Yes (unless skipping LLM phases) |
+| `run_benchmark_vary_temperature` | Yes | Yes (provider-specific) |
+
+### Recompute averages without rerunning expensive jobs
+
+```bash
+python -m scripts.recompute_averages --csv benchmark_results/agent_vs_baseline_metrics.csv --mode both
+```
+
+Helpful when you only need refreshed aligned/unaligned summary tables and plots.
+
+## Exact rerun recipes
+
+These two commands reproduce Table V in the paper (mean ± std dev across 5 runs × 20 days, temperature=0.7). Both use `--site caltech` (the Caltech campus garage in the ACN-Data platform). All 20 benchmark dates are used by default.
+
+### Reproduce paper Table V — GPT-4o rows
+
+Requires `OPENAI_API_KEY`.
+
+```bash
+python -m scripts.run_benchmark_vary_temperature \
+    --nruns 5 --temperature 0.7 --model gpt-4o
+```
+
+Expected artifacts:
+- `benchmark_results/vary_temperature_gpt-4o/all_runs_metrics.csv`
+- `benchmark_results/vary_temperature_gpt-4o/multi_run_average_table.md`
+- `benchmark_results/vary_temperature_gpt-4o/multi_run_average_bar.png`
+
+### Reproduce paper Table V — Claude Sonnet 4.6 rows
+
+Requires `ANTHROPIC_API_KEY`.
+
+```bash
+python -m scripts.run_benchmark_vary_temperature \
+    --nruns 5 --temperature 0.7 --model claude-sonnet-4-6
+```
+
+Expected artifacts:
+- `benchmark_results/vary_temperature_claude-sonnet-4-6/all_runs_metrics.csv`
+- `benchmark_results/vary_temperature_claude-sonnet-4-6/multi_run_average_table.md`
+- `benchmark_results/vary_temperature_claude-sonnet-4-6/multi_run_average_bar.png`
+
+Together these two runs produce all five rows of Table V (the Numerical Solver row appears in both; results are identical since the optimizer is deterministic).
+
+Pre-computed versions of both are already in `benchmark_results/`. The example schedule and load-profile plots in `final_report_results/` were generated with `run_phase_a` and `run_agent` on individual benchmark dates.
 
 ## Pre-computed Results
 
-`final_report_results/` has the benchmark outputs we used in the report:
+`final_report_results/` contains the artifacts used in the report:
 
-- `agent_vs_baseline_metrics.csv` — averaged metrics across all evaluation days
-- `average_results_table.md` — summary table
-- `average_results_bar.png` — bar chart comparing all three pipelines
-- `phase_a_schedule.png`, `phase_a_load.png` — example Phase A outputs
-- `agent_schedule.png`, `agent_load.png` — example agent outputs
-- `per_day/` — per-day schedule and load plots for all three pipelines
+- `agent_vs_baseline_metrics.csv` — per-day benchmark metrics
+- `average_results_table.md` — aggregated comparison table
+- `average_results_bar.png` — aggregated comparison bar chart
+- `phase_a_schedule.png`, `phase_a_load.png` — optimizer example outputs
+- `agent_schedule.png`, `agent_load.png` — agent example outputs
+- `per_day/` — per-day schedule/load plots across pipelines
 
 ## Report
 
